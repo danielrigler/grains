@@ -1,7 +1,7 @@
 Engine_grains : CroneEngine {
 
     classvar <nv = 6;
-    classvar <nlMax = 8;
+    classvar <nlMax = 14;
     classvar <wfCols = 128;
     classvar <minFrames = 4096;
     classvar <relLeave = 1.2;
@@ -265,7 +265,7 @@ Engine_grains : CroneEngine {
         dyingUntil = Array.fill(nv, { Array.fill(nlMax, { 0 }) });
         vparams = Array.fill(nv, { Dictionary.new });
         gparams = Dictionary.new;
-        nls = Array.fill(nv, { nlMax });
+        nls = Array.fill(nv, { 1 });
         actives = Array.fill(nv, { false });
         wins = Array.fill(nv * nlMax * 2, { arg k; (k % 2) });
         loadTok = Array.fill(nv, { 0 });
@@ -578,7 +578,7 @@ Engine_grains : CroneEngine {
         reportRate = 30;
         this.setReport(nv);
 
-        this.addCommand("set_win", "iffffffffffffffff", { arg msg; var i = msg[1].asInteger; if((i >= 0) and: { i < nv }, { nlMax.do({ arg ly; var s = voices[i][ly]; var a = msg[(ly * 2) + 2], b = msg[(ly * 2) + 3]; if(a.notNil and: { b.notNil }, { wins[((i * nlMax) + ly) * 2] = a; wins[(((i * nlMax) + ly) * 2) + 1] = b; if(s.notNil, { s.set(\posStart, a, \posEnd, b) }); }); }); }); });
+        this.addCommand("set_win", "iffffffffffffffffffffffffffff", { arg msg; var i = msg[1].asInteger; if((i >= 0) and: { i < nv }, { nlMax.do({ arg ly; var s = voices[i][ly]; var a = msg[(ly * 2) + 2], b = msg[(ly * 2) + 3]; if(a.notNil and: { b.notNil }, { wins[((i * nlMax) + ly) * 2] = a; wins[(((i * nlMax) + ly) * 2) + 1] = b; if(s.notNil, { s.set(\posStart, a, \posEnd, b) }); }); }); }); });
         this.addCommand("set_all", "sf", { arg msg; this.setAllVoices(msg[1].asSymbol, msg[2]); });
         this.addCommand("set_one", "isf", { arg msg; this.setVoice(msg[1].asInteger, msg[2].asSymbol, msg[3]); });
         this.addCommand("clear_param", "is", { arg msg; this.clearParam(msg[1].asInteger, msg[2].asSymbol); });

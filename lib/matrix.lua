@@ -25,22 +25,32 @@ local WALL_TOP, WALL_BOT, WALL_ROWS = 0, 28, 29
 local WAVE_DY = 14
 local PITCH_CENTER_DY, PITCH_HALF_ROWS = 14, 14
 local RAILS = {}
-
 local WALL = 15
 local BASE = 1
 local SEL_LIFT = 5
 local FAINT_LEVEL = 3
 local OVERLAP_STEP = 2
-
+local END_LVL = 13
+local CAP_HALF_MAX = 2
 local LMAX = 16
-local LVL_DIM, LVL_SEL = {}, {}
-for _, t in ipairs({LVL_DIM, LVL_SEL}) do
-  local lift = t == LVL_SEL and SEL_LIFT or 0
-  t[0] = BASE + lift
+
+local function ramp(nl, lo, hi, base)
+  local step = OVERLAP_STEP
+  if nl > 1 and (hi - lo) / (nl - 1) < step then step = (hi - lo) / (nl - 1) end
+  local t = {[0] = base}
   for c = 1, LMAX do
-    local lv = FAINT_LEVEL + (c - 1) * OVERLAP_STEP + lift
-    t[c] = lv > 15 and 15 or lv
+    local lv = floor(lo + step * ((c > nl and nl or c) - 1) + 0.5)
+    t[c] = lv > WALL and WALL or lv
   end
+  return t
+end
+
+local FULL_CELLS = 2
+local LVLS_DIM, LVLS_SEL, LVLS_FULL = {}, {}, {}
+for nl = 1, LMAX do
+  LVLS_DIM[nl]  = ramp(nl, FAINT_LEVEL, WALL - SEL_LIFT, BASE)
+  LVLS_SEL[nl]  = ramp(nl, FAINT_LEVEL + SEL_LIFT, WALL, BASE + SEL_LIFT)
+  LVLS_FULL[nl] = ramp(nl, FAINT_LEVEL, WALL, BASE)
 end
 
 local function tanh(z) local e = exp(2 * z) return (e - 1) / (e + 1) end
@@ -70,7 +80,7 @@ for d = -127, 127 do FILT_OCT[d] = exp(2 * log(1000) / 127 * d) end
 local cover, cdif = {}, {}
 local cover_on = false
 local lc0, lc1 = {}, {}
-local LVL = LVL_DIM
+local LVL = LVLS_FULL[1]
 local TL, BL = {}, {}
 
 local s_level, s_rect, s_fill
@@ -112,6 +122,12 @@ local function rails(nl)
       t[L] = WALL_TOP + 3 + floor((L - 1) * span / (nl - 1) + 0.5)
     end
   end
+  local gap = 99
+  for L = 2, nl do
+    local d = t[L] - t[L - 1]
+    if d < gap then gap = d end
+  end
+  t.half = clamp(floor((gap - 2) / 2), 1, CAP_HALF_MAX)
   RAILS[nl] = t
   return t
 end
@@ -252,9 +268,16 @@ local function draw_cell(v, S)
   end
 
   local is_sel = S.sel == v
-  local frz = S.frz and S.frz[v] and S.blink
+  local frz_v = S.frz and S.frz[v]
   local lck = S.lck and S.lck[v]
-  LVL = (is_sel and NCELL > 1) and LVL_SEL or LVL_DIM
+  local lvn = nl > 0 and nl or 1
+  if NCELL <= FULL_CELLS then
+    LVL = LVLS_FULL[lvn]
+  elseif is_sel then
+    LVL = LVLS_SEL[lvn]
+  else
+    LVL = LVLS_DIM[lvn]
+  end
 
   if ph then
     local w = xfw[v]
@@ -268,16 +291,20 @@ local function draw_cell(v, S)
       for L = 1, nl do
         R(rail_level, x + lc0[L], y0 + rd[L], lc1[L] - lc0[L] + 1, 1)
       end
-      for L = 1, nl do
-        local ry = y0 + rd[L]
-        local e0, e1 = x + lc0[L], x + lc1[L]
-        R(13, e0, ry - 2, 1, 5)
-        R(13, e1, ry - 2, 1, 5)
-        if frz and e1 - e0 >= 2 then
-          R(13, e0 + 1, ry - 2, 1, 1)
-          R(13, e0 + 1, ry + 2, 1, 1)
-          R(13, e1 - 1, ry - 2, 1, 1)
-          R(13, e1 - 1, ry + 2, 1, 1)
+      local half = rd.half
+      local caph = half * 2 + 1
+      if not frz_v or S.blink then
+        for L = 1, nl do
+          local ry = y0 + rd[L]
+          local e0, e1 = x + lc0[L], x + lc1[L]
+          R(END_LVL, e0, ry - half, 1, caph)
+          R(END_LVL, e1, ry - half, 1, caph)
+          if frz_v and e1 - e0 >= 2 then
+            R(END_LVL, e0 + 1, ry - half, 1, 1)
+            R(END_LVL, e0 + 1, ry + half, 1, 1)
+            R(END_LVL, e1 - 1, ry - half, 1, 1)
+            R(END_LVL, e1 - 1, ry + half, 1, 1)
+          end
         end
       end
       for L = 1, nl do
@@ -286,7 +313,7 @@ local function draw_cell(v, S)
           local pc = floor(p * CW)
           local a, b = lc0[L], lc1[L]
           if pc < a then pc = a elseif pc > b then pc = b end
-          R(15, x + pc, y0 + rd[L] - 2, 1, 5)
+          R(15, x + pc, y0 + rd[L] - half, 1, caph)
         end
       end
     end

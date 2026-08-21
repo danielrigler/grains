@@ -1,7 +1,7 @@
 --
 --
 --
---          Grains v0.02
+--          Grains v0.03
 --          by: @dddstudio
 --
 --
@@ -52,9 +52,9 @@ local matrix  = include("grains/lib/matrix")
 local Morph   = include("grains/lib/morph")
 local Shuffle = include("grains/lib/shuffle")
 local NV = 6
-local NL = 8
+local NL = 14
 local DEFAULT_NV = 4
-local LCAPS = {8, 8, 4, 4, 3, 3}
+local LCAPS = {14, 10, 6, 5, 4, 4}
 local RAW = matrix.RAW
 local CW = matrix.CW
 local SPAN = Pit.SPAN
@@ -74,6 +74,7 @@ local volbar = {frac = nil, t = 0}
 local DB_FLOOR = -60
 local LEVEL_MAX_DB = 6
 local LEVEL_STEP_DB = 1
+local VOL_DEFAULT_DB = -6
 local initial_reverb, initial_rev_send
 local ui_metro
 local pits = {}
@@ -285,7 +286,6 @@ for _, id in ipairs(DICE_GLOBALS) do DICE_SET[id] = true end
 
 local dicing = false
 local ovr_n = 0
-local bcast = true
 
 local function lget(i, id)
   local t = ovr[i]
@@ -299,7 +299,7 @@ local function push_one(p)
   local fn = type(xf) == "function"
   local g = params:get(id)
   local gval = fn and xf(g) or g * (xf or 1)
-  if ovr_n == 0 and bcast then
+  if ovr_n == 0 then
     eset(key, gval)
     return
   end
@@ -350,9 +350,7 @@ local function ovr_sync()
     end
   end
   ovr_n = n
-  if n == 0 and bcast and not pcall(drop_shadows) then
-    bcast = false
-  end
+  if n == 0 then drop_shadows() end
   push_voice_params()
 end
 
@@ -978,8 +976,14 @@ local function clear_voice(i)
   engine.clear(i - 1)
 end
 
+local function reset_volumes()
+  Shuffle.vol:reset()
+  for i = 1, NV do params:set(PID[i].vol, VOL_DEFAULT_DB) end
+end
+
 local function clear_all()
   for i = 1, NV do clear_voice(i) end
+  reset_volumes()
   scanned_dir = nil
   refresh_layout()
   dirty = true
@@ -1024,8 +1028,9 @@ local function load_random(n, scanned)
   refresh_layout()
 end
 
-local function load_n(n)
+local function load_n(n, keep_vol)
   n = clamp(floor(n), 1, NV)
+  if not keep_vol then reset_volumes() end
   for i = n + 1, NV do clear_voice(i) end
   for i = 1, n do
     xf_clear(i)
@@ -1044,7 +1049,6 @@ end
 
 local held = {}
 local prev_ord, ord_buf = {}, {}
-local reseed_one_ok = true
 
 local function order_keep_held(prevn)
   build_order()
@@ -1067,19 +1071,16 @@ local function reseed_engine()
   for i = 1, nva do
     if held[i] then any = true break end
   end
-  if any and reseed_one_ok then
-    local ok = pcall(function()
-      for i = 1, nva do
-        if not held[i] then engine.reseed_one(i - 1) end
-      end
-    end)
-    if ok then return end
-    reseed_one_ok = false
+  if any then
+    for i = 1, nva do
+      if not held[i] then engine.reseed_one(i - 1) end
+    end
+    return
   end
   engine.reseed()
 end
 
-local function reseed_voices()
+local function reseed_voices(reorder)
   glide = GLIDE_FRAMES
   lord_pend = nil
   local anyheld = false
@@ -1087,14 +1088,16 @@ local function reseed_voices()
     held[i] = (vfrozen[i] or vlocked[i]) or nil
     if held[i] then anyheld = true end
   end
-  local prevn = 0
-  if anyheld then
-    build_order()
-    prevn = lord_n
-    for k = 1, lord_n do prev_ord[k] = lord[k] end
+  if reorder then
+    local prevn = 0
+    if anyheld then
+      build_order()
+      prevn = lord_n
+      for k = 1, lord_n do prev_ord[k] = lord[k] end
+    end
+    params:set("lseed", math.random(9999))
+    if anyheld then order_keep_held(prevn) end
   end
-  params:set("lseed", math.random(9999))
-  if anyheld then order_keep_held(prevn) end
   flush_population()
   for i = 1, nva do
     if not held[i] then
@@ -1193,7 +1196,7 @@ local function dice()
   end
   dicing = false
   push_voice_params()
-  reseed_voices()
+  reseed_voices(true)
 end
 
 local HIDDEN = {"grains_tune", "grains_bounds", "grains_reverb", "reverb_mix", "level", "chord", "lseed"}
@@ -1259,7 +1262,7 @@ local function setup_params()
     params:add_control(PID[i].bwidth, i .. " width", controlspec.new(0, 100, "lin", 0.2, 100, "%"))
     params:set_action(PID[i].bstart, function() trim_width(i) end)
     params:set_action(PID[i].bwidth, function() trim_width(i) end)
-    params:add_control(PID[i].vol, i .. " volume", controlspec.new(Shuffle.VOL_MIN_DB, Shuffle.VOL_MAX_DB, "lin", 0.5, -6, "dB")) params:set_action(PID[i].vol, function() Shuffle.vol:touched(i) push_voices() end)
+    params:add_control(PID[i].vol, i .. " volume", controlspec.new(Shuffle.VOL_MIN_DB, Shuffle.VOL_MAX_DB, "lin", 0.5, VOL_DEFAULT_DB, "dB")) params:set_action(PID[i].vol, function() Shuffle.vol:touched(i) push_voices() end)
     params:add_number(PID[i].tune, i .. " pitch", Shuffle.PITCH_LO, Shuffle.PITCH_HI, 0) params:set_action(PID[i].tune, function() Shuffle.pitch:touched(i) push_voices() end)
     for _, k in ipairs({"bstart", "bwidth", "vol", "tune"}) do
       HIDDEN[#HIDDEN + 1] = PID[i][k]
@@ -1542,7 +1545,7 @@ local KEY_COMBOS = {
   ["1"]   = {long = function() morph_toggle() end},
   ["2"]   = {short = function() step_sel(-1) end},
   ["3"]   = {short = function() step_sel(1) end},
-  ["12"]  = {short = function() load_n(nva < 1 and DEFAULT_NV or nva) end,
+  ["12"]  = {short = function() load_n(nva < 1 and DEFAULT_NV or nva, true) end,
              long  = function() freeze_voice_toggle() end},
   ["13"]  = {short = function() dice() end,
              long  = function() freeze_all_toggle() end},
