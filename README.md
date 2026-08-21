@@ -30,7 +30,7 @@ Based on [Graintopia](https://github.com/schollz/graintopia) by @infinitedigits.
 From maiden:
 
 ```
-;install https://github.com/dddstudio/grains
+;install https://github.com/danielrigler/grains
 ```
 
 Do not forget to restart. 
