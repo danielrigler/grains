@@ -288,7 +288,7 @@ Engine_grains : CroneEngine {
             var lfoRate, lfoAmp2, lfoForward, lfoAmp, lfoPan, rate, rateSign;
             var pStart, pEnd, span, tiny, edge, switch, pos1, pos2, snd1, snd2, posK, resetTo;
             var snd, volume, boot;
-            var xfk, settled, outside, dirNow;
+            var xfk, xfr, settled, outside, dirNow;
             var xfTime = 0.03, chkRate = 25;
 
             amp    = Lag.kr(db.dbamp, 1);
@@ -326,8 +326,9 @@ Engine_grains : CroneEngine {
 
             posK = Select.kr(switch, [A2K.kr(pos1), A2K.kr(pos2)]);
 
-            xfk     = Lag.kr(switch, xfTime);
-            settled = (xfk - switch).abs < 0.02;
+            xfr     = Slew.kr(switch, 1 / xfTime, 1 / xfTime);
+            xfk     = xfr * xfr * (3 - (2 * xfr));
+            settled = (xfr - switch).abs < 1e-4;
             outside = (posK > pEnd) + (posK < pStart);
 
             LocalOut.kr(
