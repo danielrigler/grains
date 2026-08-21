@@ -44,6 +44,7 @@ local MusicUtil = require("musicutil")
 local Installer = include("grains/lib/installer/installer")
 local installer = Installer:new{requirements = {"AnalogTape"}, zip = "https://github.com/schollz/portedplugins/releases/download/v0.4.6/PortedPlugins-RaspberryPi.zip"}
 local boot_screen = not installer:ready()
+local function installer_screen() return boot_screen or installer:pending() end
 local tape    = include("grains/lib/tape")
 local Pit     = include("grains/lib/pit")
 local Dice    = include("grains/lib/dice")
@@ -1440,7 +1441,7 @@ local function setup_osc()
 end
 
 function redraw()
-  if boot_screen then installer:redraw() return end
+  if installer_screen() then installer:redraw() return end
   screen.clear()
   S.sel = sel
   matrix.draw(S)
@@ -1586,7 +1587,7 @@ local function handle_key_release()
 end
 
 function enc(n, d)
-  if boot_screen then return end
+  if installer_screen() then return end
   local k1, k2, k3 = key_state[1], key_state[2], key_state[3]
   dirty = true
 
@@ -1661,8 +1662,8 @@ end
 
 function key(n, z)
   dirty = true
-  if boot_screen then
-    if n == 2 and z == 1 and not installer.installing and not installer.ready_to_restart then
+  if installer_screen() then
+    if boot_screen and n == 2 and z == 1 and not installer.installing and not installer.ready_to_restart then
       boot_screen = false
     else
       installer:key(n, z)
@@ -1748,13 +1749,14 @@ function init()
       bounce_until = 0
       dirty = true
     end
-    if boot_screen then dirty = true end
+    if installer_screen() then dirty = true end
     if dirty then
       dirty = false
       redraw()
     end
   end
   ui_metro:start()
+  installer:check()
 end
 
 function cleanup()
