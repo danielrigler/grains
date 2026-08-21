@@ -137,7 +137,7 @@ function Installer:check()
   if not self.satisfied then return end
   if not self:is_git() then return end
   self.update.state = "checking"
-  norns.system_cmd("git -C '" .. self.path .. "' fetch --quiet 2>/dev/null; echo _done_", function()
+  norns.system_cmd("timeout -k 5 20 git -C '" .. self.path .. "' fetch --quiet 2>/dev/null; echo _done_", function()
     self.update.behind = self:count_behind()
     if self.update.behind <= 0 then
       self.update.state = nil

@@ -1,7 +1,7 @@
 --
 --
 --
---          Grains v0.02
+--          Grains v0.01
 --          by: @dddstudio
 --
 --
@@ -1717,10 +1717,7 @@ function init()
   push_per_voice()
   push_population()
   engine.report_rate(REPORT_RATE)
-  clock.run(function()
-    clock.sleep(0.4)
-    load_random(DEFAULT_NV)
-  end)
+  load_random(DEFAULT_NV)
   ui_metro = metro.init()
   ui_metro.time = 1 / FPS
   ui_metro.event = function()
@@ -1756,7 +1753,10 @@ function init()
     end
   end
   ui_metro:start()
-  installer:check()
+  clock.run(function()
+    clock.sleep(3)
+    installer:check()
+  end)
 end
 
 function cleanup()
