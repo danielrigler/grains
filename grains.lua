@@ -1225,13 +1225,6 @@ local function setup_params()
   params:add_control("panwidth", "Pan Width", controlspec.new(0, 100, "lin", 1, 90, "%"))
   params:add_control("ampfloor", "Level Floor", controlspec.new(0, 100, "lin", 1, 25, "%"))
 
-  params:add_group("grains_hold", "FREEZE / LOCK", NV * 2 + 1)
-  params:add_binary("freeze_all", "Freeze All", "toggle", 0) params:set_action("freeze_all", freeze_refresh)
-  for i = 1, NV do
-    params:add_binary("freeze" .. i, i .. " freeze", "toggle", 0) params:set_action("freeze" .. i, freeze_refresh)
-    params:add_binary("lock_v" .. i, i .. " lock", "toggle", 0) params:set_action("lock_v" .. i, lock_refresh)
-  end
-
   params:add_group("grains_tune", "TUNING", 15)
   local defaults = {
     {w = 14, t = 0,   d = 0},
@@ -1358,6 +1351,13 @@ local function setup_params()
   params:add_control("bounce_xf", "Crossfade", controlspec.new(0.1, 5, "lin", 0.1, 1, "s"))
   params:add_binary("do_bounce", "Record Loop", "trigger", 0) params:set_action("do_bounce", function(v) if v == 1 then start_bounce() end end)
 
+  params:add_group("grains_hold", "FREEZE / LOCK", NV * 2 + 1)
+  params:add_binary("freeze_all", "Freeze All", "toggle", 0) params:set_action("freeze_all", freeze_refresh)
+  for i = 1, NV do
+    params:add_binary("freeze" .. i, i .. " freeze", "toggle", 0) params:set_action("freeze" .. i, freeze_refresh)
+    params:add_binary("lock_v" .. i, i .. " lock", "toggle", 0) params:set_action("lock_v" .. i, lock_refresh)
+  end  
+  
   params:add_group("grains_src", "SOURCE", NV + 2)
   for n = 1, NV do
     params:add_binary("do_load" .. n, "Load " .. n .. " Random", "trigger", 0) params:set_action("do_load" .. n, function(v) if v == 1 then load_n(n) end end)
