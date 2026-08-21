@@ -546,7 +546,17 @@ local function flush_population()
   for i = 1, NV do
     local n = act_nl[i]
     if S.nl[i] ~= n then
+      local prev = S.nl[i] or 0
       S.nl[i] = n
+      if n > prev then
+        local pit, tls, tle = pits[i], cls[i], cle[i]
+        local sls, sle = S.ls[i], S.le[i]
+        for L = prev + 1, n do
+          local a, b = pit:window(L)
+          tls[L], tle[L] = a, b
+          sls[L], sle[L] = a, b
+        end
+      end
       if n > 0 then engine.layers(i - 1, n) end
       push_voices()
       dirty = true
