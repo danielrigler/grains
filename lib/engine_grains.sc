@@ -286,8 +286,10 @@ Engine_grains : CroneEngine {
 
             var amp, frames, wsum, idx, tuneTrig;
             var lfoRate, lfoAmp2, lfoForward, lfoAmp, lfoPan, rate, rateSign;
-            var pStart, pEnd, span, tiny, runway, loopLo, loopHi, switch, pos1, pos2, snd1, snd2, posK, resetTo;
+            var pStart, pEnd, span, tiny, edge, switch, pos1, pos2, snd1, snd2, posK, resetTo;
             var snd, volume, boot;
+            var xfk, settled, outside, dirNow;
+            var xfTime = 0.03, chkRate = 25;
 
             amp    = Lag.kr(db.dbamp, 1);
             frames = BufFrames.kr(buf).max(4096);
@@ -308,24 +310,31 @@ Engine_grains : CroneEngine {
 
             span    = (frames * 0.04).min(2048);
             tiny    = (frames * 0.005).min(256);
-            pStart  = Clip.kr(posStart * frames, tiny, frames - span - tiny);
-            pEnd    = Clip.kr(posEnd * frames, pStart + span, frames - tiny);
-            runway  = (pEnd - pStart) * 0.5;
-            loopLo  = (pStart - runway).max(0);
-            loopHi  = (pEnd + runway).min(frames);
+            edge    = ((SampleRate.ir * 0.2).min(frames * 0.06)).max(tiny);
+            pStart  = Clip.kr(posStart * frames, edge, frames - span - edge);
+            pEnd    = Clip.kr(posEnd * frames, pStart + span, frames - edge);
 
             switch = ToggleFF.kr(LocalIn.kr(1));
-            resetTo = pEnd + (lfoForward * (pStart - pEnd));
-            pos1 = Phasor.ar(trig: 1 - switch, rate: rate, start: loopLo, end: loopHi, resetPos: resetTo);
+
+            dirNow  = rate > 0;
+            resetTo = pEnd + (dirNow * (pStart - pEnd));
+
+            pos1 = Phasor.ar(trig: 1 - switch, rate: rate, start: 0, end: frames, resetPos: resetTo);
             snd1 = BufRd.ar(1, buf, pos1, 1.0, 4);
-            pos2 = Phasor.ar(trig: switch, rate: rate, start: loopLo, end: loopHi, resetPos: resetTo);
+            pos2 = Phasor.ar(trig: switch, rate: rate, start: 0, end: frames, resetPos: resetTo);
             snd2 = BufRd.ar(1, buf, pos2, 1.0, 4);
 
             posK = Select.kr(switch, [A2K.kr(pos1), A2K.kr(pos2)]);
 
-            LocalOut.kr((posK > pEnd) + (posK < pStart));
+            xfk     = Lag.kr(switch, xfTime);
+            settled = (xfk - switch).abs < 0.02;
+            outside = (posK > pEnd) + (posK < pStart);
 
-            snd = XFade2.ar(snd1, snd2, (Lag.kr(switch, 0.1) * 2) - 1);
+            LocalOut.kr(
+                Changed.kr(Stepper.kr(Impulse.kr(chkRate), 0, 0, 1000000000, outside * settled))
+            );
+
+            snd = XFade2.ar(snd1, snd2, (xfk * 2) - 1);
 
             volume = lfoAmp * EnvGen.kr(Env.new([0, 1], [Rand(0.5, 4)], 4));
             volume = volume * EnvGen.kr(Env.adsr(1, 1, 1, rel), gate + boot, doneAction: 2);
