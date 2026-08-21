@@ -49,6 +49,7 @@ local tape    = include("grains/lib/tape")
 local Pit     = include("grains/lib/pit")
 local Dice    = include("grains/lib/dice")
 local matrix  = include("grains/lib/matrix")
+local font    = include("grains/lib/font")
 local Morph   = include("grains/lib/morph")
 local Shuffle = include("grains/lib/shuffle")
 local NV = 6
@@ -75,6 +76,8 @@ local DB_FLOOR = -60
 local LEVEL_MAX_DB = 6
 local LEVEL_STEP_DB = 1
 local VOL_DEFAULT_DB = -6
+local LPF_OFF, HPF_OFF = 20000, 20
+local NOFILTER_CHANCE = 50
 local initial_reverb, initial_rev_send
 local ui_metro
 local pits = {}
@@ -453,7 +456,7 @@ local function push_per_voice()
       local m = frz and 0 or clamp(mr * 2 ^ (s.mr * var * 1.3), 0.02, 12)
       vmr[i] = m
       eset_one(i, "mrate", m)
-      eset_one(i, "cutoff",   clamp(cut * 2 ^ ((s.cut - 0.25) * var * 2.6), 90, 15000))
+      eset_one(i, "cutoff",   clamp(cut * 2 ^ ((s.cut - 0.25) * var * 2.6), 90, LPF_OFF))
       local db = clamp(lvl + ivol + trim + s.lvl * var * 7, -100, 6)
       if lvl <= -59.5 or ivol <= -59.5 then db = -100 end
       eset_one(i, "db", db)
@@ -1142,8 +1145,13 @@ local DICE = {
   space = function()
     local c = Dice.pick(Dice.SPACE)
     params:set("panwidth", Dice.rnd(c.pan[1], c.pan[2]))
-    params:set("cutoff", Dice.rndexp(c.cut[1], c.cut[2]))
-    params:set("vhpf", Dice.rnd(20, 400))
+    if Dice.chance(NOFILTER_CHANCE) then
+      params:set("cutoff", LPF_OFF)
+      params:set("vhpf", HPF_OFF)
+    else
+      params:set("cutoff", Dice.rndexp(c.cut[1], c.cut[2]))
+      params:set("vhpf", Dice.rnd(HPF_OFF, 400))
+    end
     params:set("variance", Dice.rnd(0, 100))
 
     local d = c.dly
@@ -1449,11 +1457,13 @@ function redraw()
   S.sel = sel
   matrix.draw(S)
   local now = util.time()
-  if volbar.frac and (now - volbar.t) < POP_DUR then
+  local vol_on = volbar.frac and (now - volbar.t) < POP_DUR
+  if vol_on then
     matrix.volbar(volbar.frac)
   elseif morph_on then
     matrix.morphbar(Morph.pos)
   end
+  if vol_on or not morph_on then matrix.icons(font.draw) end
   if pop.kind and (now - pop.t) < POP_DUR then
     if pop.kind == "fx" then
       matrix.fxpopup(pop.txt)
@@ -1709,6 +1719,7 @@ function init()
   setup_osc()
   params:set("lseed", math.random(9999))
   params:bang()
+  font.init()
   refresh_layout()
   Morph.init(morph_first, morph_last, morph_skip)
   params.action_write = function(filename) pset_write(filename .. ".gstate") end
@@ -1726,6 +1737,7 @@ function init()
   ui_metro.event = function()
     physics_tick()
     hold_tick()
+    if font.tick() then dirty = true end
     if frz_any then
       blink_n = blink_n + 1
       if blink_n >= BLINK_FRAMES then

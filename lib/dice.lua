@@ -104,8 +104,9 @@ D.SHAPE = {
 local function rnd(lo, hi) return lo + math.random() * (hi - lo) end
 local function rndexp(lo, hi) return lo * (hi / lo) ^ math.random() end
 local function pick(t) return t[math.random(#t)] end
+local function chance(pct) return pct > 0 and math.random() * 100 < pct end
 
-D.rnd, D.rndexp, D.pick = rnd, rndexp, pick
+D.rnd, D.rndexp, D.pick, D.chance = rnd, rndexp, pick, chance
 
 local ROOTS = {-24, -12, -12, -7, -5, 0, 0, 0, 0, 0, 5, 7, 12, 12, 24}
 

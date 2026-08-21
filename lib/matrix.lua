@@ -9,13 +9,16 @@ local function clamp(x, lo, hi)
   if x < lo then return lo elseif x > hi then return hi end return x
 end
 
+local TOP = 0
+local ROW2 = 32
+
 local LAYOUTS = {
-  {w = 128, h = 64, cx = {0},                    cy = {0}},
-  {w = 62,  h = 64, cx = {0, 65},                cy = {0, 0}},
-  {w = 62,  h = 30, cx = {0, 65, 0},             cy = {0, 0, 33}},
-  {w = 62,  h = 30, cx = {0, 65, 0, 65},         cy = {0, 0, 33, 33}},
-  {w = 40,  h = 30, cx = {0, 43, 86, 0, 43},     cy = {0, 0, 0, 33, 33}},
-  {w = 40,  h = 30, cx = {0, 43, 86, 0, 43, 86}, cy = {0, 0, 0, 33, 33, 33}}
+  {w = 128, h = 62, cx = {0},                    cy = {TOP}},
+  {w = 62,  h = 62, cx = {0, 65},                cy = {TOP, TOP}},
+  {w = 62,  h = 30, cx = {0, 65, 0},             cy = {TOP, TOP, ROW2}},
+  {w = 62,  h = 30, cx = {0, 65, 0, 65},         cy = {TOP, TOP, ROW2, ROW2}},
+  {w = 40,  h = 30, cx = {0, 43, 86, 0, 43},     cy = {TOP, TOP, TOP, ROW2, ROW2}},
+  {w = 40,  h = 30, cx = {0, 43, 86, 0, 43, 86}, cy = {TOP, TOP, TOP, ROW2, ROW2, ROW2}}
 }
 
 local CW, CH, WH = 40, 32, 13
@@ -45,7 +48,7 @@ local function ramp(nl, lo, hi, base)
   return t
 end
 
-local FULL_CELLS = 2
+local FULL_CELLS = 1
 local LVLS_DIM, LVLS_SEL, LVLS_FULL = {}, {}, {}
 for nl = 1, LMAX do
   LVLS_DIM[nl]  = ramp(nl, FAINT_LEVEL, WALL - SEL_LIFT, BASE)
@@ -64,7 +67,7 @@ for c = 0, 127 do
   if v > TILT_CURVE_MAX then TILT_CURVE_MAX = v end
   if v < TILT_CURVE_MIN then TILT_CURVE_MIN = v end
 end
-local CURVE_TOP, CURVE_BOT = 2, 61
+local CURVE_TOP, CURVE_BOT = 0, 58
 local TILT_AMP = (CURVE_BOT - CURVE_TOP) / (TILT_CURVE_MAX - TILT_CURVE_MIN)
 local TILT_CY = CURVE_TOP + (TILT_CURVE_MAX * TILT_AMP)
 
@@ -98,8 +101,10 @@ function M.set_count(n)
   WALL_ROWS = WALL_BOT - WALL_TOP + 1
   WAVE_DY = floor((WALL_TOP + WALL_BOT) / 2)
   WH = WAVE_DY - 1
-  PITCH_CENTER_DY = floor(WALL_ROWS / 2)
-  PITCH_HALF_ROWS = PITCH_CENTER_DY
+  PITCH_CENTER_DY = WAVE_DY
+  PITCH_HALF_ROWS = PITCH_CENTER_DY - WALL_TOP
+  local down = WALL_BOT - PITCH_CENTER_DY
+  if down < PITCH_HALF_ROWS then PITCH_HALF_ROWS = down end
   RAILS = {}
   for i = 0, CW - 1 do cover[i] = 0 end
   cover_on = false
@@ -373,7 +378,17 @@ function M.draw(S)
   Rflush()
 end
 
-local BAR_Y = 63
+local BAR_Y = 62
+
+local function P(l, x, y) R(l, x, y, 1, 1) end
+
+function M.icons(drawfn)
+  s_level, s_rect, s_fill = screen.level, screen.rect, screen.fill
+  lastlevel = -1
+  pending = false
+  drawfn(P)
+  Rflush()
+end
 
 function M.volbar(frac)
   local w = floor(frac * 128 + 0.5)
