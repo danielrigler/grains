@@ -1,6 +1,6 @@
 # grains
 
-A six-voice granular looper for [monome norns](https://monome.org/docs/norns/).
+A six-voice granular sample player for [monome norns](https://monome.org/docs/norns/).
 
 Point it at a folder of samples and it loads up-to six voices, each running several independently drifting playback heads. The heads are in a little physics simulation, colliding inside the boundaries you set, so a patch keeps moving on its own without ever repeating exactly. Usually the result tends to land somewhere between a drone, a tape loop and a chord that never quite settles. 
 Apply all kinds of effects including: reverb, delay, shimmer, chorus, tape simulation, glitch, waveforder, bitcrusher, resonator, etc. It is possible to morph between two states. And there is a seamless loop recorder. The control layout lets you perform without any additional hardware.  
