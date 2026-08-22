@@ -1,7 +1,7 @@
 --
 --
 --
---          Grains v0.03
+--          Grains v0.04
 --          by: @dddstudio
 --
 --
@@ -17,7 +17,10 @@
 -- K3+E2 Selected Pitch
 -- K3+E3 Other Pitches
 -- K1+E2 Layers
--- K1+E3 Movement
+-- K1+E3 Energy
+-- K1+K3+E1 Voices
+-- K1+K3+E2 Morph Depth
+-- K1+K3+E3 Morph Rate
 -- K2+K3 Lock Voice
 -- K1+K2+K3 Reseed Voices
 -- K2+K3+E1/E2/E3 Effect Mix
@@ -51,7 +54,11 @@ local Dice    = include("grains/lib/dice")
 local matrix  = include("grains/lib/matrix")
 local font    = include("grains/lib/font")
 local Morph   = include("grains/lib/morph")
+local Sync    = include("grains/lib/sync")
 local Shuffle = include("grains/lib/shuffle")
+local Reso    = include("grains/lib/reso")
+local Keys    = include("grains/lib/keys")
+local clamp   = include("grains/lib/util").clamp
 local NV = 6
 local NL = 14
 local DEFAULT_NV = 4
@@ -66,9 +73,8 @@ local phys_acc = 0
 local ENERGY_BASE = 200
 local REPORT_RATE = 30
 local sel = 0
-local key_state = {false, false, false}
-local key_gesture = nil
-local LONGPRESS = 1.2
+local key_state = Keys.state
+local LONGPRESS = 1
 local POP_DUR = 0.5
 local pop = {kind = nil, txt = nil, t = 0}
 local volbar = {frac = nil, t = 0}
@@ -82,10 +88,12 @@ local initial_reverb, initial_rev_send
 local ui_metro
 local pits = {}
 local morph_on = false
-local MORPH_SKIP = {morph = true, source = true, chunk = true, lseed = true}
+local MORPH_SKIP = {morph = true, source = true, chunk = true, lseed = true,
+                    level = true}
 
 local function morph_skip(id)
   return MORPH_SKIP[id] ~= nil
+      or id:find("^morph") ~= nil
       or id:find("^do_") ~= nil
       or id:find("^lock_") ~= nil
       or id:find("^freeze") ~= nil
@@ -154,8 +162,9 @@ local cls, cle = {}, {}
 local lastcol = {}
 local poscol = {}
 local file_list = {}
+local SCAN_MAX_FILES, SCAN_MAX_DEPTH = 2000, 6
+local SLOT_CHARS = 24
 local scanned_dir = nil
-local DEFAULT_DIR = _path.tape
 local vfrozen, vlocked, ovr = {}, {}, {}
 S.frz, S.lck = vfrozen, vlocked
 S.blink = false
@@ -169,10 +178,6 @@ local wbuf = {}
 for k = 1, NL * 2 do wbuf[k] = (k % 2 == 0) and 1 or 0 end
 
 local floor, abs, sqrt = math.floor, math.abs, math.sqrt
-
-local function clamp(x, lo, hi)
-  if x < lo then return lo elseif x > hi then return hi end return x
-end
 
 local function vol_frac(db, hi)
   return clamp((db - DB_FLOOR) / (hi - DB_FLOOR), 0, 1)
@@ -189,7 +194,6 @@ local function stratified(n, lo, hi)
   return t
 end
 
-local EMPTY = {}
 local VSEED_FIELDS = {"tune", "mr", "cut", "lvl", "floor"}
 local function reroll_seeds()
   for _, f in ipairs(VSEED_FIELDS) do
@@ -201,33 +205,13 @@ local function reroll_seeds()
   end
 end
 
-local RESO_VOICINGS = {
-  {0, 7, 12, 19, 24}, {0, 7, 14, 21, 28}, {0, 4, 7, 12, 16}, {0, 3, 7, 12, 15},
-  {0, 4, 7, 11, 14}, {0, 3, 7, 10, 14}, {0, 12, 19.0196, 24, 27.8631}, {0, 12, 24, 36, 48}
-}
-local RESO_NAMES = {"5th+oct", "fifths", "major", "minor", "maj7", "min7", "harmonic", "octaves"}
-local reso_ratios = {}
-
-local function reso_voicing(idx)
-  local d = RESO_VOICINGS[idx] or RESO_VOICINGS[1]
-  for i = 1, 5 do reso_ratios[i] = 2 ^ (d[i] / 12) end
-end
-reso_voicing(1)
-
-local function reso_update()
-  if params:get("reso_mix") <= 0 then return end
-  local f = 440 * 2 ^ ((params:get("reso_root") - 69) / 12)
-  engine.reso_freqs(f * reso_ratios[1], f * reso_ratios[2], f * reso_ratios[3],
-    f * reso_ratios[4], f * reso_ratios[5])
-end
-
 local bounce_until = 0
 
 local function start_bounce()
   if bounce_until > 0 then return end
-  local d = params:get("bounce_len")
-  bounce_until = util.time() + d + 1.5
-  engine.bounce(d, "grains_" .. os.date("%y%m%d_%H%M%S"), params:get("bounce_xf"))
+  local d, xf = params:get("bounce_len"), params:get("bounce_xf")
+  bounce_until = util.time() + d + xf + 0.5
+  engine.bounce(d, "grains_" .. os.date("%y%m%d_%H%M%S"), xf)
   dirty = true
 end
 
@@ -456,7 +440,7 @@ local function push_per_voice()
       local m = frz and 0 or clamp(mr * 2 ^ (s.mr * var * 1.3), 0.02, 12)
       vmr[i] = m
       eset_one(i, "mrate", m)
-      eset_one(i, "cutoff",   clamp(cut * 2 ^ ((s.cut - 0.25) * var * 2.6), 90, LPF_OFF))
+      eset_one(i, "cutoff",   clamp(cut * 2 ^ (s.cut * var * 2.6), 90, LPF_OFF))
       local db = clamp(lvl + ivol + trim + s.lvl * var * 7, -100, 6)
       if lvl <= -59.5 or ivol <= -59.5 then db = -100 end
       eset_one(i, "db", db)
@@ -605,8 +589,10 @@ local function pset_write(fn)
       end
       f:write("\n")
     end
-    for id, v in pairs(ovr[i] or EMPTY) do
-      f:write(string.format("ovr %d %s %.9g\n", i, id, v))
+    if ovr[i] then
+      for id, v in pairs(ovr[i]) do
+        f:write(string.format("ovr %d %s %.9g\n", i, id, v))
+      end
     end
   end
   f:write(string.format("mpos %.6f\n", Morph.pos))
@@ -814,6 +800,16 @@ end
 local function refresh_layout()
   if layout_busy then return end
   local n = count_files()
+  local shown = (n >= NV) and NV or n + 1
+  if S.shown ~= shown then
+    S.shown = shown
+    for i = 1, NV do
+      if i <= shown then params:show(PID[i].file) else params:hide(PID[i].file) end
+    end
+    if _menu and type(_menu.rebuild_params) == "function" then
+      _menu.rebuild_params()
+    end
+  end
   local cap = LCAPS[n] or (lcap > 0 and lcap) or LCAPS[1]
   if n == nva and cap == lcap then return end
   layout_busy = true
@@ -842,7 +838,7 @@ local function refresh_layout()
     end
   end
   layout_busy = false
-  engine.report_voices(n)
+  engine.report_geom(n, cap)
   push_population()
   push_voices()
   dirty = true
@@ -975,7 +971,7 @@ local function clear_voice(i)
   S.wf[i], S.raw[i] = nil, nil
   tries[i] = 0
   for L = 1, NL do S.pos[i][L] = 0 end
-  params:set(PID[i].file, DEFAULT_DIR, true)
+  params:set(PID[i].file, _path.tape, true)
   engine.clear(i - 1)
 end
 
@@ -1012,7 +1008,17 @@ local function scan_source()
   if dir == nil or dir == "" or dir == "-" then dir = _path.tape end
   if dir:sub(-1) ~= "/" then dir = dir:match("^(.*/)") or _path.tape end
   if dir ~= scanned_dir then
-    file_list = tape.scan(dir, 900, 3)
+    local capped, deepened
+    file_list, capped, deepened = tape.scan(dir, SCAN_MAX_FILES, SCAN_MAX_DEPTH)
+    local note = ""
+    if capped then
+      note = string.format(" (capped at %d -- point SOURCE at a subfolder to reach the rest)",
+        SCAN_MAX_FILES)
+    elseif deepened then
+      note = string.format(" (stopped at %d folders deep)", SCAN_MAX_DEPTH)
+    end
+    print(string.format("grains: %d sample%s in %s%s",
+      #file_list, #file_list == 1 and "" or "s", dir, note))
     scanned_dir = #file_list > 0 and dir or nil
   end
   return #file_list > 0
@@ -1048,6 +1054,74 @@ local function load_n(n, keep_vol)
     return
   end
   load_random(n, true)
+end
+
+local src = {}
+
+function src.pick_fresh(k)
+  local used = {}
+  for i = 1, NV do
+    if S.files[i] then used[S.files[i]] = true end
+  end
+  local pool = {}
+  for _, f in ipairs(file_list) do
+    if not used[f] then pool[#pool + 1] = f end
+  end
+  if #pool == 0 then pool = file_list end
+  return tape.pick(pool, k)
+end
+
+function src.reslice()
+  if count_files() < 1 then return end
+  layout_busy = true
+  for i = 1, NV do
+    local path = S.files[i]
+    if path then
+      tries[i] = 0
+      load_voice(i, path)
+    end
+  end
+  layout_busy = false
+  refresh_layout()
+  dirty = true
+end
+
+function src.set_count(n)
+  n = clamp(floor(n), 1, NV)
+  local cur = count_files()
+  if n == cur then return end
+  layout_busy = true
+  if n < cur then
+    for i = n + 1, cur do clear_voice(i) end
+  else
+    local need = 0
+    for i = 1, n do
+      if S.files[i] == nil then need = need + 1 end
+    end
+    if need > 0 then
+      if not scan_source() then
+        layout_busy = false
+        return false
+      end
+      local chosen, k = src.pick_fresh(need), 0
+      for i = 1, n do
+        if S.files[i] == nil then
+          k = k + 1
+          local f = chosen[k]
+          if f then
+            tries[i] = 0
+            params:set(PID[i].vol, VOL_DEFAULT_DB)
+            params:set(PID[i].tune, 0)
+            load_voice(i, f)
+          end
+        end
+      end
+    end
+  end
+  layout_busy = false
+  refresh_layout()
+  dirty = true
+  return true
 end
 
 local held = {}
@@ -1155,6 +1229,9 @@ local DICE = {
     params:set("variance", Dice.rnd(0, 100))
 
     local d = c.dly
+    if Sync.dly_synced() then
+      params:set("d_div", math.random(3, 14))
+    end
     params:set("d_time",    Dice.rndexp(d.time[1], d.time[2]))
     params:set("d_fb",      Dice.rnd(d.fb[1], d.fb[2]))
     params:set("d_lpf",     Dice.rndexp(d.lpf[1], d.lpf[2]))
@@ -1189,25 +1266,27 @@ local DICE = {
 
 local function dice()
   glide = GLIDE_FRAMES
-  ovr_capture()
-  dicing = true
-  for _, k in ipairs({"tune", "motion", "space", "shape"}) do
-    if rolls(k) then DICE[k]() end
-  end
-  if rolls("voice") then
-    for i = 1, NV do
-      if not vlocked[i] then
-        params:set(PID[i].vol, Dice.rnd(-50, 5))
-        params:set(PID[i].tune, math.random(Shuffle.PITCH_LO, Shuffle.PITCH_HI))
+  Morph.gesture(function()
+    ovr_capture()
+    dicing = true
+    for _, k in ipairs({"tune", "motion", "space", "shape"}) do
+      if rolls(k) then DICE[k]() end
+    end
+    if rolls("voice") then
+      for i = 1, NV do
+        if not vlocked[i] then
+          params:set(PID[i].vol, Dice.rnd(-50, 5))
+          params:set(PID[i].tune, math.random(Shuffle.PITCH_LO, Shuffle.PITCH_HI))
+        end
       end
     end
-  end
-  dicing = false
-  push_voice_params()
-  reseed_voices(true)
+    dicing = false
+    push_voice_params()
+    reseed_voices(true)
+  end)
 end
 
-local HIDDEN = {"grains_tune", "grains_bounds", "grains_reverb", "reverb_mix", "level", "chord", "lseed"}
+local HIDDEN = {"grains_tune", "grains_bounds", "grains_reverb", "reverb_mix", "level", "chord", "lseed", "morph_seed", "grains_hold"}
 
 local function setup_params()
   morph_first = #params.params + 1
@@ -1215,7 +1294,7 @@ local function setup_params()
   params:add_separator("  ", "  ")
 
   for i = 1, NV do
-    params:add_file(PID[i].file, "S" ..i, DEFAULT_DIR) params:set_action(PID[i].file, function(path)
+    params:add_file(PID[i].file, "S" ..i, _path.tape) params:set_action(PID[i].file, function(path)
       if path == nil or path == "" or path == "-" then return end
       if path:sub(-1) == "/" then
         if S.files[i] then
@@ -1229,23 +1308,36 @@ local function setup_params()
       tries[i] = 0
       load_voice(i, path)
     end)
+    local slot = params:lookup_param(PID[i].file)
+    local sid = PID[i].file
+    if slot then
+      slot.string = function()
+        local v = params:get(sid)
+        if type(v) ~= "string" or v == "" or v == "-" or v:sub(-1) == "/" then return "-" end
+        local base = v:match("[^/]+$") or v
+        local stem, ext = base:match("^(.+)%.(%w+)$")
+        if stem and #ext <= 4 then base = stem end
+        if #base > SLOT_CHARS then base = base:sub(1, SLOT_CHARS - 2) .. ".." end
+        return base
+      end
+    end
   end
-  params:add_binary("do_clear", "Unload All", "trigger", 0) params:set_action("do_clear", function(v) if v == 1 then clear_all() end end)
 
   params:add_separator(" ", " ")
 
-  params:add_group("grains_main", "VOICES", 11)
+  params:add_group("grains_main", "VOICES", 12)
   params:add_control("level", "Level", controlspec.new(DB_FLOOR, LEVEL_MAX_DB, "lin", 0.5, -20, "dB"))
   params:add_number("density", "Density", 0, NV * NL, 0) params:set_action("density", function(v) if not layout_busy then local m = params:lookup_param("density").max dfrac = m > 0 and clamp(v / m, 0, 1) or 0 end push_population() end)
   params:add_control("tuning", "Tuning", controlspec.new(-36, 24, "lin", 1, 0, "st"))
   params:add_control("spread", "Pitch Spread", controlspec.new(0, 100, "lin", 1, 75, "%"))
   params:add_option("chord", "Chord", Dice.CHORD_NAMES, 6)
   params:add_control("variance", "Voice Variance", controlspec.new(0, 100, "lin", 1, 50, "%"))
-  params:add_control("motionrate", "Motion Rate", controlspec.new(0.05, 8, "exp", 0, 1, "x"))
+  params:add_control("motionrate", "Energy", controlspec.new(0.05, 8, "exp", 0, 1, "x"))
   params:add_control("reverse", "Reverse Chance", controlspec.new(0, 100, "lin", 1, 40, "%"))
   params:add_control("rateslew", "Rate Slew", controlspec.new(0.005, 10, "exp", 0, 1.5, "s"))
   params:add_control("panwidth", "Pan Width", controlspec.new(0, 100, "lin", 1, 90, "%"))
   params:add_control("ampfloor", "Level Floor", controlspec.new(0, 100, "lin", 1, 25, "%"))
+  params:add_binary("freeze_all", "Freeze All", "toggle", 0) params:set_action("freeze_all", freeze_refresh)
 
   params:add_group("grains_tune", "TUNING", 15)
   local defaults = {
@@ -1280,9 +1372,11 @@ local function setup_params()
   params:add_group("grains_reverb", "R3VERB", 1)
   params:add_taper("reverb_mix", "Mix", -40, 18, -40, 0, "dB") params:set_action("reverb_mix", nrev_set_mix)
 
-  params:add_group("grains_delay", "DELAY", 9)
+  params:add_group("grains_delay", "DELAY", 11)
   params:add_control("d_mix", "Mix", controlspec.new(0, 100, "lin", 1, 0, "%")) params:set_action("d_mix", function(x) engine.d_mix(x * 0.01) end)
-  params:add_control("d_time", "Time", controlspec.new(0.02, 5, "exp", 0, 0.5, "s")) params:set_action("d_time", function(x) engine.d_time(x) end)
+  params:add_option("d_sync", "Time Base", {"free", "clock"}, 1) params:set_action("d_sync", function() Sync.dly_refresh() Sync.vis() end)
+  params:add_number("d_div", "Division", 1, Sync.NDIV, Sync.DIV_QUART, function() return Sync.dly_fmt() end) params:set_action("d_div", function() Sync.dly_refresh() end)
+  params:add_control("d_time", "Time", controlspec.new(0.02, 5, "exp", 0, 0.5, "s")) params:set_action("d_time", function() Sync.dly_refresh() end)
   params:add_control("d_fb", "Feedback", controlspec.new(0, 120, "lin", 1, 40, "%")) params:set_action("d_fb", function(x) engine.d_fb(x * 0.01) end)
   params:add_control("d_lpf", "LPF", controlspec.new(20, 20000, "exp", 1, 7500, "Hz")) params:set_action("d_lpf", function(x) engine.d_lpf(x) end)
   params:add_control("d_hpf", "HPF", controlspec.new(20, 20000, "exp", 1, 200, "Hz")) params:set_action("d_hpf", function(x) engine.d_hpf(x) end)
@@ -1301,12 +1395,6 @@ local function setup_params()
   params:add_control("sh_fbdelay", "Delay", controlspec.new(0.01, 0.5, "lin", 0.01, 0.2, "s")) params:set_action("sh_fbdelay", function(x) engine.sh_fbdelay(x) end)
   params:add_control("sh_fb", "Feedback", controlspec.new(0, 100, "lin", 1, 20, "%")) params:set_action("sh_fb", function(x) engine.sh_fb(x * 0.01) end)
 
-  params:add_group("grains_dimension", "STEREO", 4)
-  params:add_control("m_width", "Width", controlspec.new(0, 200, "lin", 1, 100, "%")) params:set_action("m_width", function(v) engine.m_width(v / 100) end)
-  params:add_control("dimension_mix", "Dimension", controlspec.new(0, 100, "lin", 1, 0, "%")) params:set_action("dimension_mix", function(x) engine.dimension_mix(x * 0.01) end)
-  params:add_option("haas", "Haas Effect", {"off", "on"}, 1) params:set_action("haas", function(x) engine.haas(x - 1) end)
-  params:add_taper("rspeed", "Rotation", 0, 1, 0, 1, "Hz") params:set_action("rspeed", function(v) engine.rspeed(v) end)
-
   params:add_group("grains_tape", "TAPE", 8)
   params:add_option("tape_mix", "Analog", {"off", "on"}, 1) params:set_action("tape_mix", function(x) engine.tape_mix(x - 1) end)
   params:add_control("shaper_mix", "Shaper drive", controlspec.new(0, 100, "lin", 1, 0, "%")) params:set_action("shaper_mix", function(v) engine.shaper_mix(v * 0.01) end)
@@ -1316,6 +1404,12 @@ local function setup_params()
   params:add_control("flutter_amp", "Flutter Depth", controlspec.new(0, 100, "lin", 1, 35, "%")) params:set_action("flutter_amp", function(v) engine.flutter_amp(v * 0.01) end)
   params:add_control("flutter_freq", "Flutter Speed", controlspec.new(3, 30, "lin", 0.01, 6, "Hz")) params:set_action("flutter_freq", function(v) engine.flutter_freq(v) end)
   params:add_control("flutter_var", "Flutter Var", controlspec.new(0.1, 10, "lin", 0.01, 2, "Hz")) params:set_action("flutter_var", function(v) engine.flutter_var(v) end)
+
+  params:add_group("grains_dimension", "STEREO", 4)
+  params:add_control("m_width", "Width", controlspec.new(0, 200, "lin", 1, 100, "%")) params:set_action("m_width", function(v) engine.m_width(v / 100) end)
+  params:add_control("dimension_mix", "Dimension", controlspec.new(0, 100, "lin", 1, 0, "%")) params:set_action("dimension_mix", function(x) engine.dimension_mix(x * 0.01) end)
+  params:add_option("haas", "Haas Effect", {"off", "on"}, 1) params:set_action("haas", function(x) engine.haas(x - 1) end)
+  params:add_taper("rspeed", "Rotation", 0, 1, 0, 1, "Hz") params:set_action("rspeed", function(v) engine.rspeed(v) end)
 
   params:add_group("grains_eq", "EQ", 4)
   params:add_control("eq_low", "Bass", controlspec.new(-20, 20, "lin", 0.5, 0, "dB")) params:set_action("eq_low", function(v) engine.eq_low(v) end)
@@ -1340,10 +1434,10 @@ local function setup_params()
   params:add_control("wf_sym", "Symmetry", controlspec.new(0, 100, "lin", 1, 0, "%")) params:set_action("wf_sym", function(v) engine.wf_sym(v * 0.01) end)
 
   params:add_group("grains_reso", "RESONATE", 4)
-  params:add_control("reso_mix", "Mix", controlspec.new(0, 100, "lin", 1, 0, "%")) params:set_action("reso_mix", function(v) engine.reso_mix(v * 0.01) reso_update() end)
+  params:add_control("reso_mix", "Mix", controlspec.new(0, 100, "lin", 1, 0, "%")) params:set_action("reso_mix", function(v) engine.reso_mix(v * 0.01) Reso.update() end)
   params:add_control("reso_decay", "Decay", controlspec.new(0.01, 5, "exp", 0, 2, "s")) params:set_action("reso_decay", function(v) engine.reso_decay(v) end)
-  params:add_number("reso_root", "Root", 24, 128, 48, function(p) return MusicUtil.note_num_to_name(p:get(), true) end) params:set_action("reso_root", function() reso_update() end)
-  params:add_option("reso_voicing", "Voicing", RESO_NAMES, 2) params:set_action("reso_voicing", function(v) reso_voicing(v) reso_update() end)
+  params:add_number("reso_root", "Root", 24, 128, 48, function(p) return MusicUtil.note_num_to_name(p:get(), true) end) params:set_action("reso_root", function() Reso.update() end)
+  params:add_option("reso_voicing", "Voicing", Reso.NAMES, 2) params:set_action("reso_voicing", function(v) Reso.voicing(v) Reso.update() end)
 
   params:add_group("grains_glitch", "GLITCH", 8)
   params:add_control("gl_ratio", "Glitch", controlspec.new(0, 100, "lin", 1, 0, "%")) params:set_action("gl_ratio", function(v) engine.gl_ratio(v * 0.01) end)
@@ -1355,11 +1449,6 @@ local function setup_params()
   params:add_control("gl_rev", "Reverse Chance", controlspec.new(0, 100, "lin", 1, 0, "%")) params:set_action("gl_rev", function(v) engine.gl_rev(v * 0.01) end)
   params:add_control("gl_pitch", "Pitch Chance", controlspec.new(0, 100, "lin", 1, 0, "%")) params:set_action("gl_pitch", function(v) engine.gl_pitch(v * 0.01) end)
 
-  params:add_group("grains_morph", "MORPH", 3)
-  params:add_control("morph", "Morph", controlspec.new(0, 100, "lin", 0.5, 0, "%")) params:set_action("morph", function(v) Morph.set(v * 0.01) dirty = true end)
-  params:add_binary("do_store_a", "Store A", "trigger", 0) params:set_action("do_store_a", function(v) if v == 1 then Morph.store(1) params:set("morph", 0) end end)
-  params:add_binary("do_store_b", "Store B", "trigger", 0) params:set_action("do_store_b", function(v) if v == 1 then Morph.store(2) params:set("morph", 100) end end)
-
   params:add_group("grains_gen", "RANDOMIZE", 8)
   params:add_binary("do_dice", "Randomize!", "trigger", 0) params:set_action("do_dice", function(v) if v == 1 then dice() end end)
   params:add_binary("do_reseed", "Reseed Voices", "trigger", 0) params:set_action("do_reseed", function(v) if v == 1 then reseed_voices() end end)
@@ -1368,24 +1457,47 @@ local function setup_params()
     params:add_option("lock_" .. k, k, {"roll", "hold"}, 1)
   end
 
+  params:add_group("grains_morph", "MORPH", 12)
+  params:add_control("morph", "Morph", controlspec.new(0, 100, "lin", 0.5, 0, "%")) params:set_action("morph", function(v)
+    if not Sync.driving and Sync.mo_on() then params:set("morph_auto", 1) end
+    Morph.set(v * 0.01)
+    dirty = true
+  end)
+  params:add_binary("do_store_a", "Store A", "trigger", 0) params:set_action("do_store_a", function(v) if v == 1 then params:set("morph_auto", 1) Morph.store(1) dirty = true end end)
+  params:add_binary("do_store_b", "Store B", "trigger", 0) params:set_action("do_store_b", function(v) if v == 1 then params:set("morph_auto", 1) Morph.store(2) dirty = true end end)
+  params:add_binary("do_store_clear", "Clear A/B", "trigger", 0) params:set_action("do_store_clear", function(v) if v == 1 then Morph.clear() dirty = true end end)
+  params:add_option("morph_auto", "Motion", {"off", "on"}, 1) params:set_action("morph_auto", function(v)
+    if v == 2 and params:get("morph_depth") <= 0 then params:set("morph_depth", 100) end
+    Sync.vis()
+    dirty = true
+  end)
+  params:add_control("morph_depth", "Depth", controlspec.new(0, 100, "lin", 1, 100, "%"))
+  params:add_option("morph_shape", "Shape", Sync.SHAPES, 2)
+  params:add_option("morph_sync", "Time Base", {"free", "clock"}, 2) params:set_action("morph_sync", function() Sync.vis() end)
+  params:add_number("morph_div", "Division", 1, Sync.NDIV, Sync.DIV_4BAR, function() return Sync.mo_fmt() end)
+  params:add_control("morph_rate", "Free Cycle", controlspec.new(0.25, 600, "exp", 0, 20, "s"))
+  params:add_control("morph_slew", "Smoothing", controlspec.new(0, 8, "lin", 0.01, 0.1, "s"))
+  params:add_number("morph_seed", "Motion Seed", 1, 9999, 1)
+
   params:add_group("grains_bounce", "RECORD", 3)
   params:add_control("bounce_len", "Loop Length", controlspec.new(1, 60, "lin", 0.5, 8, "s"))
   params:add_control("bounce_xf", "Crossfade", controlspec.new(0.1, 5, "lin", 0.1, 1, "s"))
   params:add_binary("do_bounce", "Record Loop", "trigger", 0) params:set_action("do_bounce", function(v) if v == 1 then start_bounce() end end)
 
-  params:add_group("grains_hold", "FREEZE / LOCK", NV * 2 + 1)
-  params:add_binary("freeze_all", "Freeze All", "toggle", 0) params:set_action("freeze_all", freeze_refresh)
+  params:add_group("grains_hold", "FREEZE / LOCK", NV * 2)
   for i = 1, NV do
     params:add_binary("freeze" .. i, i .. " freeze", "toggle", 0) params:set_action("freeze" .. i, freeze_refresh)
     params:add_binary("lock_v" .. i, i .. " lock", "toggle", 0) params:set_action("lock_v" .. i, lock_refresh)
-  end  
-  
-  params:add_group("grains_src", "SOURCE", NV + 2)
+  end
+
+  params:add_group("grains_src", "SOURCE", NV + 4)
+  params:add_binary("do_clear", "Unload All", "trigger", 0) params:set_action("do_clear", function(v) if v == 1 then clear_all() end end)
   for n = 1, NV do
     params:add_binary("do_load" .. n, "Load " .. n .. " Random", "trigger", 0) params:set_action("do_load" .. n, function(v) if v == 1 then load_n(n) end end)
   end
   params:add_file("source", "Folder", _path.tape) params:set_action("source", function() scanned_dir = nil end)
   params:add_control("chunk", "Slice Length", controlspec.new(2, 60, "lin", 0.5, 15, "s"))
+  params:add_binary("do_reslice", "Re-slice", "trigger", 0) params:set_action("do_reslice", function(v) if v == 1 then src.reslice() end end)
 
   for _, p in ipairs(VOICE_PARAMS) do
     params:set_action(p[2], function()
@@ -1411,7 +1523,7 @@ local function setup_osc()
       for i = 1, nva do
         local pos, pc = S.pos[i], poscol[i]
         local live = S.on[i]
-        local base = (i - 1) * NL
+        local base = (i - 1) * lcap
         for L = 1, (S.nl[i] or 0) do
           local p = args[base + L] or 0
           pos[L] = p
@@ -1456,6 +1568,7 @@ function redraw()
   screen.clear()
   S.sel = sel
   matrix.draw(S)
+  if nva < 1 then matrix.notice("no audio loaded", "K1+K2 or load from the MENU") end
   local now = util.time()
   local vol_on = volbar.frac and (now - volbar.t) < POP_DUR
   if vol_on then
@@ -1484,20 +1597,22 @@ local function edit(suffix, d)
   params:delta(PID[sel][suffix], d)
 end
 
-local COARSE = {density = 5, layers = 8}
-local coarse_acc = {}
-local function coarse(id, d)
-  local step = COARSE[id] or 4
-  local t = floor((coarse_acc[id] or 0) + d)
-  local n = floor(abs(t) / step)
-  if t < 0 then n = -n end
-  coarse_acc[id] = t - n * step
-  return n
-end
+local COARSE = {density = 5, layers = 8, voices = 8, mofreq = 3}
+local coarse = Keys.coarse
 
 local function pop_show(kind, txt)
   pop.kind, pop.txt, pop.t = kind, txt, util.time()
   dirty = true
+end
+
+function src.nudge_count(step)
+  local cur = count_files()
+  if cur < 1 and step < 0 then return end
+  local want = clamp(cur + step, 1, NV)
+  if want == cur then return end
+  if src.set_count(want) ~= false then
+    pop_show("fx", string.format("voices: %d", count_files()))
+  end
 end
 
 local function level_delta(d)
@@ -1533,17 +1648,6 @@ local function lock_voice_toggle()
   toggle_param("lock_v" .. sel)
 end
 
-local function gesture_id()
-  return (key_state[1] and "1" or "") .. (key_state[2] and "2" or "") .. (key_state[3] and "3" or "")
-end
-
-local hold_due, hold_act
-
-local function mark_key_interaction()
-  if key_gesture then key_gesture.fired = true end
-  hold_due = nil
-end
-
 local function step_sel(d)
   dirty = true
   if nva < 1 then sel = 0 return end
@@ -1563,49 +1667,13 @@ local KEY_COMBOS = {
   ["123"] = {short = function() reseed_voices() end}
 }
 
-local function handle_key_press()
-  for id in pairs(COARSE) do coarse_acc[id] = 0 end
-  local t = util.time()
-  key_gesture = {id = gesture_id(), press_time = t, fired = false}
-  local combo = KEY_COMBOS[key_gesture.id]
-  hold_act = combo and combo.long
-  hold_due = hold_act and (t + LONGPRESS) or nil
-end
-
-local function hold_tick()
-  if hold_due and util.time() >= hold_due then
-    hold_due = nil
-    local g = key_gesture
-    if g and not g.fired then
-      g.fired = true
-      hold_act()
-    end
-  end
-end
-
-local function handle_key_release()
-  hold_due = nil
-  local g = key_gesture
-  if g and not g.fired then
-    g.fired = true
-    local combo = KEY_COMBOS[g.id]
-    if combo and combo.short then combo.short() end
-  end
-  local id = gesture_id()
-  if id == "" then
-    key_gesture = nil
-  else
-    key_gesture = {id = id, press_time = g and g.press_time or util.time(), fired = true}
-  end
-end
-
 function enc(n, d)
   if installer_screen() then return end
   local k1, k2, k3 = key_state[1], key_state[2], key_state[3]
   dirty = true
 
   if k1 or k2 or k3 then
-    mark_key_interaction()
+    Keys.mark()
   end
 
   if k2 and k3 and not k1 then
@@ -1647,15 +1715,24 @@ function enc(n, d)
     end
 
   elseif k1 then
-    if n == 1 then
+    if n == 1 and k3 then
+      local step = coarse("voices", d)
+      if step ~= 0 then src.nudge_count(step) end
+    elseif n == 1 then
       local step = coarse("density", d)
       if step ~= 0 then params:delta("density", step) end
+    elseif n == 2 and k3 then
+      local txt = Sync.mo_depth_delta(d)
+      if txt then pop_show("fx", txt) end
     elseif n == 2 then
       local step = coarse("layers", d)
       if step ~= 0 and sel >= 1 then nudge_voice_layers(sel, step) end
+    elseif k3 then
+      local txt = Sync.mo_freq_delta(Sync.mo_synced() and coarse("mofreq", d) or d)
+      if txt then pop_show("fx", txt) end
     else
       params:delta("motionrate", d)
-      pop_show("fx", string.format("motion: %.2fx", params:get("motionrate")))
+      pop_show("fx", string.format("energy: %.2fx", params:get("motionrate")))
     end
 
   else
@@ -1685,8 +1762,7 @@ function key(n, z)
   end
   if n == 2 and z == 1 and not key_state[2] then Shuffle.vol:reset() end
   if n == 3 and z == 1 and not key_state[3] then Shuffle.pitch:reset() end
-  key_state[n] = (z == 1)
-  if z == 1 then handle_key_press() else handle_key_release() end
+  if z == 1 then Keys.press(n) else Keys.release(n) end
 end
 
 function init()
@@ -1717,7 +1793,9 @@ function init()
   reroll_seeds()
   setup_params()
   setup_osc()
+  Keys.init{combos = KEY_COMBOS, longpress = LONGPRESS, coarse = COARSE}
   params:set("lseed", math.random(9999))
+  params:set("morph_seed", math.random(9999))
   params:bang()
   font.init()
   refresh_layout()
@@ -1735,8 +1813,9 @@ function init()
   ui_metro = metro.init()
   ui_metro.time = 1 / FPS
   ui_metro.event = function()
+    Sync.tick()
     physics_tick()
-    hold_tick()
+    Keys.tick()
     if font.tick() then dirty = true end
     if frz_any then
       blink_n = blink_n + 1

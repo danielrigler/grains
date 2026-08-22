@@ -221,7 +221,7 @@ local FX_SPECS = {
 }
 
 local RIGHT_EDGE, Y0 = 127, 61
-local UPDATE_INTERVAL = 1 / 10
+local UPDATE_INTERVAL = 1 / 5
 
 local _pl, _px, _py, _pn = {}, {}, {}, 0
 local _n, _changed = 0, false

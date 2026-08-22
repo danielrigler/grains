@@ -8,7 +8,7 @@ local CONTACT = 2
 
 local abs, max, random, floor = math.abs, math.max, math.random, math.floor
 
-local function clamp(x, lo, hi) if x < lo then return lo elseif x > hi then return hi end return x end
+local clamp = include("grains/lib/util").clamp
 
 local function new_bead(lo, hi)
   local r = random(3, 12)

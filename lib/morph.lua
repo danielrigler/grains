@@ -9,7 +9,13 @@ local relist = true
 local n = 0
 local applying = false
 local linked = true
-local EPS = 1e-4
+local EPS = 1e-3
+
+local mc = {}
+local cpos = nil
+local ARRIVED = 0.99
+
+local target = nil
 
 function M.hold(f)
   local prev = applying
@@ -22,6 +28,7 @@ end
 function M.set(pos)
   if pos < 0 then pos = 0 elseif pos > 1 then pos = 1 end
   if pos >= 1 then linked = false end
+  if target and pos ~= M.pos then target = nil end
   M.pos = pos
   M.dirty = true
 end
@@ -47,38 +54,89 @@ local function raw_of(k)
   return mp[k]:get_raw()
 end
 
-local function write(k, v)
+local function write(k, v, exact)
   local p = mp[k]
-  local lo, sp = bounds(k)
-  if sp then
-    if sp <= 0 then return end
-    local want = floor(lo + v * sp + 0.5)
-    if p:get() ~= want then p:set(want) end
+  local lo, sp
+  if mnum[k] then
+    lo = p.min
+    sp = p.max - lo
   else
-    local at = p:get_raw()
-    if v < at - EPS or v > at + EPS then p:set_raw(v) end
+    lo, sp = mlo[k], msp[k]
   end
+  if sp then
+    if sp <= 0 then return 0 end
+    local at = p:get()
+    local want = floor(lo + v * sp + 0.5)
+    if at ~= want then p:set(want) at = want end
+    return (at - lo) / sp
+  end
+  local at = p:get_raw()
+  if exact then
+    if at ~= v then p:set_raw(v) return v end
+    return at
+  end
+  if v < at - EPS or v > at + EPS then
+    p:set_raw(v)
+    return v
+  end
+  return at
+end
+
+local function leg(pos)
+  if cpos == nil then return nil end
+  local f
+  if pos > cpos then
+    local den = 1 - cpos
+    if den <= 0 then return mb, 0 end
+    f = (pos - cpos) / den
+    if f > 1 then f = 1 end
+    return mb, f
+  elseif pos < cpos then
+    if cpos <= 0 then return ma, 0 end
+    f = (cpos - pos) / cpos
+    if f > 1 then f = 1 end
+    return ma, f
+  end
+  return mb, 0
+end
+
+local function hold_here()
+  local C = mc
+  for k = 1, n do C[k] = raw_of(k) end
+  cpos = M.pos
+  relist = true
 end
 
 local function record(k)
   local raw = raw_of(k)
   local pos = M.pos
   relist = true
+  if raw < 0 then raw = 0 elseif raw > 1 then raw = 1 end
+
   if linked then
     ma[k], mb[k] = raw, raw
-  elseif pos <= 0 then
-    ma[k] = raw
-  elseif pos >= 1 then
-    mb[k] = raw
-  else
-    local a, b = ma[k], mb[k]
-    local d = raw - (a + (b - a) * pos)
-    ma[k], mb[k] = a + d, b + d
+    if cpos then mc[k] = raw end
+    return
   end
+
+  local dest
+  if target == 1 or target == 2 then dest = target
+  elseif pos <= 0 then dest = 1
+  elseif pos >= 1 then dest = 2 end
+  if dest then
+    if dest == 1 then ma[k] = raw else mb[k] = raw end
+    if cpos == pos then mc[k] = raw end
+    return
+  end
+
+  mc[k] = raw
+  if cpos ~= pos then hold_here() end
 end
 
 function M.init(first, last, skip)
   n = 0
+  target = nil
+  cpos = nil
   local tN, tO = params.tNUMBER, params.tOPTION
   local tC, tT = params.tCONTROL, params.tTAPER
   for i = first, last do
@@ -113,38 +171,77 @@ function M.init(first, last, skip)
 end
 
 local function rebuild()
-  nact = 0
-  for k = 1, n do
-    if ma[k] ~= mb[k] then
-      nact = nact + 1
-      mact[nact] = k
+  local cnt, act, A, B = 0, mact, ma, mb
+  if cpos == nil then
+    for k = 1, n do
+      if A[k] ~= B[k] then cnt = cnt + 1 act[cnt] = k end
+    end
+  else
+    local C = mc
+    for k = 1, n do
+      local c = C[k]
+      if c ~= A[k] or c ~= B[k] then cnt = cnt + 1 act[cnt] = k end
     end
   end
+  nact = cnt
   relist = false
 end
 
 function M.apply()
   M.dirty = false
   if relist then rebuild() end
-  if nact == 0 then return end
+  local count = nact
+  if count == 0 then cpos = nil return end
   local pos = M.pos
-  local ends = (pos <= 0) and 1 or ((pos >= 1) and 2 or 0)
+  local e, f = leg(pos)
+  if e and f >= ARRIVED then f = 1 end
+  local into = (pos <= 0) and ma or ((pos >= 1) and mb or nil)
+  local act, dirty_list, exact = mact, false, into ~= nil
   applying = true
-  for j = 1, nact do
-    local k = mact[j]
-    local a, b = ma[k], mb[k]
-    local v = a + (b - a) * pos
-    if v < 0 then v = 0 elseif v > 1 then v = 1 end
-    write(k, v)
-    if ends == 1 then
-      local r = raw_of(k)
-      if r ~= ma[k] then ma[k] = r relist = true end
-    elseif ends == 2 then
-      local r = raw_of(k)
-      if r ~= mb[k] then mb[k] = r relist = true end
+  if e then
+    local C, g = mc, 1 - f
+    for j = 1, count do
+      local k = act[j]
+      local v = C[k] * g + e[k] * f
+      if v < 0 then v = 0 elseif v > 1 then v = 1 end
+      local r = write(k, v, exact)
+      if into and r ~= into[k] then into[k] = r dirty_list = true end
+    end
+  else
+    local A, B, g = ma, mb, 1 - pos
+    for j = 1, count do
+      local k = act[j]
+      local v = A[k] * g + B[k] * pos
+      if v < 0 then v = 0 elseif v > 1 then v = 1 end
+      local r = write(k, v, exact)
+      if into and r ~= into[k] then into[k] = r dirty_list = true end
     end
   end
   applying = false
+  if dirty_list then relist = true end
+  if e and f >= ARRIVED then
+    cpos = nil
+    relist = true
+    M.dirty = true
+  end
+end
+
+local function file_gesture()
+  local pos = M.pos
+  local dest
+  if linked then dest = 0
+  elseif target == 1 or target == 2 then dest = target
+  elseif pos <= 0 then dest = 1
+  elseif pos >= 1 then dest = 2
+  end
+  if dest == nil then hold_here() return end
+  for k = 1, n do
+    local r = raw_of(k)
+    if dest ~= 2 then ma[k] = r end
+    if dest ~= 1 then mb[k] = r end
+  end
+  cpos = nil
+  relist = true
 end
 
 function M.store(which)
@@ -154,8 +251,28 @@ function M.store(which)
   end
   linked = false
   relist = true
-  M.pos = (which == 1) and 0 or 1
-  M.dirty = true
+  target = which
+  hold_here()
+end
+
+function M.temp() return cpos end
+
+function M.armed() return target end
+
+function M.gesture(f)
+  M.hold(f)
+  file_gesture()
+end
+
+function M.clear()
+  for k = 1, n do
+    local r = raw_of(k)
+    ma[k], mb[k] = r, r
+  end
+  linked = true
+  target = nil
+  relist = true
+  cpos = nil
 end
 
 function M.slots() return n end
@@ -165,8 +282,8 @@ function M.slot(k) return mid[k], ma[k], mb[k] end
 function M.put(id, a, b)
   local k = byid[id]
   if k == nil then return false end
-  if a then ma[k] = a end
-  if b then mb[k] = b end
+  if a then ma[k] = (a < 0) and 0 or (a > 1) and 1 or a end
+  if b then mb[k] = (b < 0) and 0 or (b > 1) and 1 or b end
   relist = true
   return true
 end
@@ -174,6 +291,8 @@ end
 function M.settled(pos)
   linked = false
   relist = true
+  target = nil
+  cpos = nil
   if pos then
     M.pos = (pos < 0 and 0) or (pos > 1 and 1) or pos
   end

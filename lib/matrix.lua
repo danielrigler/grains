@@ -5,9 +5,7 @@ M.NMAX = 6
 
 local floor, exp, abs, log, sqrt = math.floor, math.exp, math.abs, math.log, math.sqrt
 
-local function clamp(x, lo, hi)
-  if x < lo then return lo elseif x > hi then return hi end return x
-end
+local clamp = include("grains/lib/util").clamp
 
 local TOP = 0
 local ROW2 = 32
@@ -409,6 +407,19 @@ function M.morphbar(frac)
   screen.level(15)
   screen.rect(floor(frac * (128 - THUMB_W) + 0.5), BAR_Y, THUMB_W, 1)
   screen.fill()
+  lastlevel = -1
+end
+
+function M.notice(l1, l2)
+  Rflush()
+  screen.level(15)
+  screen.move(64, 28)
+  screen.text_center(l1)
+  if l2 then
+    screen.level(3)
+    screen.move(64, 40)
+    screen.text_center(l2)
+  end
   lastlevel = -1
 end
 
