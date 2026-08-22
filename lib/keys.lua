@@ -25,7 +25,7 @@ local function gesture_id()
 end
 
 function K.coarse(id, d)
-  local step = coarse_step[id] or 4
+  local step = coarse_step[id] or 3
   local t = floor((coarse_acc[id] or 0) + d)
   local n = floor(abs(t) / step)
   if t < 0 then n = -n end

@@ -6,7 +6,6 @@
 --
 --
 --
--- K1+E1 Density - Start Here
 -- E1 Master Volume
 -- K2/K3 Select
 -- E2/E3 Set Boundaries
@@ -16,9 +15,10 @@
 -- K3+E1 Shuffle Pitches
 -- K3+E2 Selected Pitch
 -- K3+E3 Other Pitches
+-- K1+E1 Density - Start Here
 -- K1+E2 Layers
--- K1+E3 Energy
--- K1+K3+E1 Voices
+-- K1+E3 Voices
+-- K1+K3+E1 Energy
 -- K1+K3+E2 Morph Depth
 -- K1+K3+E3 Morph Rate
 -- K2+K3 Lock Voice
@@ -84,12 +84,11 @@ local LEVEL_STEP_DB = 1
 local VOL_DEFAULT_DB = -6
 local LPF_OFF, HPF_OFF = 20000, 20
 local NOFILTER_CHANCE = 50
-local initial_reverb, initial_rev_send
+local initial_reverb, initial_rev_send, initial_monitor_level
 local ui_metro
 local pits = {}
 local morph_on = false
-local MORPH_SKIP = {morph = true, source = true, chunk = true, lseed = true,
-                    level = true}
+local MORPH_SKIP = {morph = true, source = true, chunk = true, lseed = true, level = true}
 
 local function morph_skip(id)
   return MORPH_SKIP[id] ~= nil
@@ -1716,8 +1715,8 @@ function enc(n, d)
 
   elseif k1 then
     if n == 1 and k3 then
-      local step = coarse("voices", d)
-      if step ~= 0 then src.nudge_count(step) end
+      params:delta("motionrate", d)
+      pop_show("fx", string.format("energy: %.2fx", params:get("motionrate")))
     elseif n == 1 then
       local step = coarse("density", d)
       if step ~= 0 then params:delta("density", step) end
@@ -1731,8 +1730,8 @@ function enc(n, d)
       local txt = Sync.mo_freq_delta(Sync.mo_synced() and coarse("mofreq", d) or d)
       if txt then pop_show("fx", txt) end
     else
-      params:delta("motionrate", d)
-      pop_show("fx", string.format("energy: %.2fx", params:get("motionrate")))
+      local step = coarse("voices", d)
+      if step ~= 0 then src.nudge_count(step) end
     end
 
   else
@@ -1766,6 +1765,8 @@ function key(n, z)
 end
 
 function init()
+  initial_monitor_level = params:get('monitor_level')
+  params:set('monitor_level', -math.huge)
   math.randomseed(floor(util.time() * 1000) % 1000000)
   for i = 1, NV do
     pits[i] = Pit.new(LCAPS[1] * 2)
@@ -1857,5 +1858,6 @@ function cleanup()
   if ui_metro then ui_metro:stop() end
   if initial_rev_send then params:set("rev_eng_input", initial_rev_send) end
   if initial_reverb then params:set("reverb", initial_reverb) end
+  if initial_monitor_level then params:set('monitor_level', initial_monitor_level) end
   osc.event = nil
 end
