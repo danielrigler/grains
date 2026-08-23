@@ -37,21 +37,20 @@ local floor = math.floor
 
 local byid = {}
 
-local function bounds(k)
-  if mnum[k] then
-    local p = mp[k]
-    return p.min, p.max - p.min
-  end
-  return mlo[k], msp[k]
-end
-
 local function raw_of(k)
-  local lo, sp = bounds(k)
+  local p = mp[k]
+  local lo, sp
+  if mnum[k] then
+    lo = p.min
+    sp = p.max - lo
+  else
+    lo, sp = mlo[k], msp[k]
+  end
   if sp then
     if sp <= 0 then return 0 end
-    return (mp[k]:get() - lo) / sp
+    return (p:get() - lo) / sp
   end
-  return mp[k]:get_raw()
+  return p:get_raw()
 end
 
 local function write(k, v, exact)
@@ -197,25 +196,17 @@ function M.apply()
   if e and f >= ARRIVED then f = 1 end
   local into = (pos <= 0) and ma or ((pos >= 1) and mb or nil)
   local act, dirty_list, exact = mact, false, into ~= nil
+
+  local X, Y, t
+  if e then X, Y, t = mc, e, f else X, Y, t = ma, mb, pos end
+  local g = 1 - t
   applying = true
-  if e then
-    local C, g = mc, 1 - f
-    for j = 1, count do
-      local k = act[j]
-      local v = C[k] * g + e[k] * f
-      if v < 0 then v = 0 elseif v > 1 then v = 1 end
-      local r = write(k, v, exact)
-      if into and r ~= into[k] then into[k] = r dirty_list = true end
-    end
-  else
-    local A, B, g = ma, mb, 1 - pos
-    for j = 1, count do
-      local k = act[j]
-      local v = A[k] * g + B[k] * pos
-      if v < 0 then v = 0 elseif v > 1 then v = 1 end
-      local r = write(k, v, exact)
-      if into and r ~= into[k] then into[k] = r dirty_list = true end
-    end
+  for j = 1, count do
+    local k = act[j]
+    local v = X[k] * g + Y[k] * t
+    if v < 0 then v = 0 elseif v > 1 then v = 1 end
+    local r = write(k, v, exact)
+    if into and r ~= into[k] then into[k] = r dirty_list = true end
   end
   applying = false
   if dirty_list then relist = true end
@@ -255,10 +246,6 @@ function M.store(which)
   hold_here()
 end
 
-function M.temp() return cpos end
-
-function M.armed() return target end
-
 function M.gesture(f)
   M.hold(f)
   file_gesture()
@@ -278,6 +265,17 @@ end
 function M.slots() return n end
 
 function M.slot(k) return mid[k], ma[k], mb[k] end
+
+function M.move(from_id, to_id)
+  local a, b = byid[from_id], byid[to_id]
+  if a == nil or b == nil then return false end
+  ma[b], mb[b], mc[b] = ma[a], mb[a], mc[a]
+  local r = raw_of(a)
+  if r < 0 then r = 0 elseif r > 1 then r = 1 end
+  ma[a], mb[a], mc[a] = r, r, r
+  relist = true
+  return true
+end
 
 function M.put(id, a, b)
   local k = byid[id]

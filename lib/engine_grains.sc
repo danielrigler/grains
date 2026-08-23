@@ -11,7 +11,7 @@ Engine_grains : CroneEngine {
     var <buffers, <silent, <voices, pg;
     var dying, dyingUntil;
     var stateBus, reporter, reportRate, oState, nornsAddr;
-    var curStride, reportSlots, trashIndex;
+    var curStride, reportSlots, trashIndex, curReportK = -1;
     var busMain, fxMain, fxDelay, fxShimmer, fxTilt, fxDimension;
     var fxEq, fxTape, fxShaper, fxWobble, fxBitcrush, fxWavefold;
     var fxResonator, fxGlitch, fxHaas, fxRotate;
@@ -73,6 +73,9 @@ Engine_grains : CroneEngine {
 
     setReport { arg chans;
         var k = (chans / reportChunk).ceil.asInteger.clip(0, reportSlots);
+
+        if(k == curReportK and: { (k == 0) or: { reporter.notNil } }, { ^this });
+        curReportK = k;
         if(reporter.notNil, { reporter.free; reporter = nil });
         if(k > 0, {
             reporter = Synth.new(("grainsreport" ++ k).asSymbol,
@@ -279,6 +282,43 @@ Engine_grains : CroneEngine {
                 });
             });
         };
+    }
+
+    moveVoice { arg src, dst;
+        var b, ln, old;
+        if((src < 0) or: { src >= nv } or: { dst < 0 } or: { dst >= nv } or: { src == dst }, { ^this });
+
+        loadTok[src] = loadTok[src] + 1;
+        loadTok[dst] = loadTok[dst] + 1;
+
+        b = buffers[src];
+        ln = nls[src];
+        old = buffers[dst];
+
+        buffers[dst] = b;
+        nls[dst] = ln;
+        loadDone[dst] = loadTok[dst];
+        vparams[dst] = vparams[src].copy;
+
+        actives[dst] = actives[src];
+
+        buffers[src] = silent;
+        nls[src] = 1;
+        loadDone[src] = loadTok[src];
+        vparams[src] = Dictionary.new;
+        actives[src] = false;
+
+        this.stopVoice(src);
+        this.clearState(src);
+
+        if(old.notNil and: { old !== silent }, { fork { 2.5.wait; old.free }; });
+
+        this.clearState(dst);
+        if(b === silent, {
+            this.stopVoice(dst);
+        }, {
+            this.startVoice(dst);
+        });
     }
 
     alloc {
@@ -605,7 +645,7 @@ Engine_grains : CroneEngine {
         reportRate = 30;
         this.setReport(nv * nlMax);
 
-        this.addCommand("set_win", "iffffffffffffffffffffffffffff", { arg msg; var i = msg[1].asInteger; if((i >= 0) and: { i < nv }, { nlMax.do({ arg ly; var s = voices[i][ly]; var a = msg[(ly * 2) + 2], b = msg[(ly * 2) + 3]; if(a.notNil and: { b.notNil }, { wins[((i * nlMax) + ly) * 2] = a; wins[(((i * nlMax) + ly) * 2) + 1] = b; if(s.notNil, { s.set(\posStart, a, \posEnd, b) }); }); }); }); });
+        this.addCommand("set_win", "iffffffffffffffffffffffffffff", { arg msg; var i = msg[1].asInteger; if((i >= 0) and: { i < nv }, { curStride.do({ arg ly; var s = voices[i][ly]; var a = msg[(ly * 2) + 2], b = msg[(ly * 2) + 3]; if(a.notNil and: { b.notNil }, { wins[((i * nlMax) + ly) * 2] = a; wins[(((i * nlMax) + ly) * 2) + 1] = b; if(s.notNil, { s.set(\posStart, a, \posEnd, b) }); }); }); }); });
         this.addCommand("set_all", "sf", { arg msg; this.setAllVoices(msg[1].asSymbol, msg[2]); });
         this.addCommand("set_one", "isf", { arg msg; this.setVoice(msg[1].asInteger, msg[2].asSymbol, msg[3]); });
         this.addCommand("clear_param", "is", { arg msg; this.clearParam(msg[1].asInteger, msg[2].asSymbol); });
@@ -615,6 +655,7 @@ Engine_grains : CroneEngine {
         this.addCommand("layers", "ii", { arg msg; var i = msg[1].asInteger; if((i >= 0) and: { i < nv }, { this.setLayers(i, msg[2].asInteger); }); });
         this.addCommand("clear", "i", { arg msg; var i = msg[1].asInteger; if((i >= 0) and: { i < nv }, { var old = buffers[i]; loadTok[i] = loadTok[i] + 1; buffers[i] = silent; nls[i] = 1; this.stopVoice(i); this.clearState(i); if(old.notNil and: { old !== silent }, { fork { 2.5.wait; old.free }; }); }); });
         this.addCommand("read", "isff", { arg msg; this.readChunk(msg[1].asInteger, msg[2].asString, msg[3], msg[4]); });
+        this.addCommand("move", "ii", { arg msg; this.moveVoice(msg[1].asInteger, msg[2].asInteger); });
         this.addCommand("report_rate", "f", { arg msg; reportRate = msg[1]; if(reporter.notNil, { reporter.set(\rate, reportRate) }); });
         this.addCommand("report_geom", "ii", { arg msg; this.setGeom(msg[1].asInteger, msg[2].asInteger); });
         this.addCommand(\d_time, "f", { arg msg; fxDelay.set(\delay, msg[1]) });

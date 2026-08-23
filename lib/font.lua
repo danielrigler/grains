@@ -1,6 +1,6 @@
 local font = {}
 
-font.micro_font = {
+local micro_font = {
   D = {{1,1,0},{1,0,1},{1,1,0}},
   B = {{1,1,0},{0,1,1},{0,0,1}},
   L = {{1,0},{1,0},{1,1}},
@@ -27,7 +27,7 @@ font.micro_font = {
 }
 
 local micro_font_by_byte = {}
-for ch, glyph in pairs(font.micro_font) do micro_font_by_byte[ch:byte()] = glyph end
+for ch, glyph in pairs(micro_font) do micro_font_by_byte[ch:byte()] = glyph end
 
 local floor, min, max, abs, log = math.floor, math.min, math.max, math.abs, math.log
 
@@ -60,21 +60,6 @@ local function plot_text(plot, x, y, text, level)
   end
   return cursor_x
 end
-font.plot_text = plot_text
-
-local _text_cache = {}
-function font.plot_text_cached(plot, x, y, text, level)
-  local c = _text_cache[text]
-  if not c then
-    local xs, ys, n = {}, {}, 0
-    local w = plot_text(function(_, px, py) n = n + 1 xs[n] = px ys[n] = py end, 0, 0, text, 1) - 1
-    c = {xs = xs, ys = ys, n = n, w = w}
-    _text_cache[text] = c
-  end
-  local xs, ys = c.xs, c.ys
-  for i = 1, c.n do plot(level, x + xs[i], y + ys[i]) end
-  return x + c.w + 1
-end
 
 local fx = {
   reverb_mix    = -40,
@@ -102,22 +87,23 @@ local fx = {
   vhpf          = 20
 }
 
-local watched = {}
+local watched, nwatched = {}, 0
+
+local function poll()
+  for i = 1, nwatched do
+    local id = watched[i]
+    fx[id] = params:get(id)
+  end
+end
 
 function font.init()
   local n = 0
   for id in pairs(fx) do
     if params.lookup[id] then n = n + 1 watched[n] = id end
   end
-  for k = n + 1, #watched do watched[k] = nil end
-  font.poll()
-end
-
-function font.poll()
-  for i = 1, #watched do
-    local id = watched[i]
-    fx[id] = params:get(id)
-  end
+  for k = n + 1, nwatched do watched[k] = nil end
+  nwatched = n
+  poll()
 end
 
 local BINARY_ON = 25
@@ -220,6 +206,13 @@ local FX_SPECS = {
   {glyph = "Z", show = stereo_active,                              val = stereo_intensity}
 }
 
+local NFX = #FX_SPECS
+for i = 1, NFX do
+  local spec = FX_SPECS[i]
+  local g = micro_font_by_byte[spec.glyph:byte()]
+  spec.w = (g and #g[1] or 3) + 1
+end
+
 local RIGHT_EDGE, Y0 = 127, 61
 local UPDATE_INTERVAL = 1 / 5
 
@@ -237,25 +230,20 @@ local function collect(level, x, y)
   end
 end
 
-local function glyph_width(ch)
-  local g = micro_font_by_byte[ch:byte()]
-  return g and #g[1] or 3
-end
-
 function font.tick()
   local now = util.time()
   if now - _last_update < UPDATE_INTERVAL then return false end
   _last_update = now
   _draw_now = now
-  font.poll()
+  poll()
   local shown, width = 0, 0
-  for i = 1, #FX_SPECS do
+  for i = 1, NFX do
     local spec = FX_SPECS[i]
     if spec.show(fx) then
       shown = shown + 1
       _shown[shown] = spec.glyph
       _level[shown] = value_to_level(spec.val(fx))
-      width = width + glyph_width(spec.glyph) + 1
+      width = width + spec.w
     end
   end
   if width > 0 then width = width - 1 end

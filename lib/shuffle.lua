@@ -34,8 +34,9 @@ function E:reset()
 end
 
 function E:apply()
-  local k = floor(self.depth / M.SPAN)
-  local f = self.depth / M.SPAN - k
+  local d = self.depth / M.SPAN
+  local k = floor(d)
+  local f = d - k
   local s = f * f * (3 - 2 * f)
   local seed = seed_now()
   local lo, hi, q, fid = self.lo, self.hi, self.quant, self.fid
@@ -77,6 +78,12 @@ function E:touched(i)
   if not self.applying then self:release(i) end
 end
 
+function E:relocate(src, dst)
+  if src == dst then return end
+  self.base[dst], self.off[dst] = self.base[src], self.off[src] or 0
+  self.base[src], self.off[src] = nil, 0
+end
+
 function E:nudge(i, d)
   self:release(i)
   local id = self.ids[i]
@@ -90,6 +97,11 @@ local function new(ids, fid, lo, hi, quant, step, emin, emax)
     step = step, emin = emin, emax = emax,
     base = {}, off = {}, depth = 0, applying = false
   }, E)
+end
+
+function M.relocate(src, dst)
+  M.vol:relocate(src, dst)
+  M.pitch:relocate(src, dst)
 end
 
 function M.init(cfg)

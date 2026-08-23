@@ -19,13 +19,13 @@ local LAYOUTS = {
   {w = 40,  h = 30, cx = {0, 43, 86, 0, 43, 86}, cy = {TOP, TOP, TOP, ROW2, ROW2, ROW2}}
 }
 
-local CW, CH, WH = 40, 32, 13
-local CX, CY = LAYOUTS[6].cx, LAYOUTS[6].cy
+local CW, CH, WH
+local CX, CY
+local WALL_TOP, WALL_BOT, WALL_ROWS
+local WAVE_DY
+local PITCH_CENTER_DY, PITCH_HALF_ROWS
+local RAILS
 local NCELL = -1
-local WALL_TOP, WALL_BOT, WALL_ROWS = 0, 28, 29
-local WAVE_DY = 14
-local PITCH_CENTER_DY, PITCH_HALF_ROWS = 14, 14
-local RAILS = {}
 local WALL = 15
 local BASE = 1
 local SEL_LIFT = 5
@@ -86,6 +86,9 @@ local TL, BL = {}, {}
 
 local s_level, s_rect, s_fill
 local xfp, xfw, xfx, xfy
+local s_wf, s_on, s_loaded, s_nl, s_ls, s_le, s_pos
+local s_b0, s_b1, s_volf, s_pitchf, s_frz, s_lck
+local s_sel, s_blink
 local lastlevel = -1
 local pending = false
 
@@ -106,7 +109,7 @@ function M.set_count(n)
   RAILS = {}
   for i = 0, CW - 1 do cover[i] = 0 end
   cover_on = false
-  M.CW, M.CH, M.WH, M.N = CW, CH, WH, n
+  M.CW, M.CH = CW, CH
   return true
 end
 
@@ -167,31 +170,35 @@ local function Rflush()
   if pending then s_fill() pending = false end
 end
 
-local function wall_cols(S, v)
-  local w0 = floor((S.b0[v] or 0) * CW + 0.5)
-  local w1 = floor((S.b1[v] or 1) * CW + 0.5) - 1
+local function wall_cols(v)
+  local w0 = floor((s_b0[v] or 0) * CW + 0.5)
+  local w1 = floor((s_b1[v] or 1) * CW + 0.5) - 1
   if w0 < 0 then w0 = 0 elseif w0 > CW - 2 then w0 = CW - 2 end
   if w1 < w0 + 1 then w1 = w0 + 1 elseif w1 > CW - 1 then w1 = CW - 1 end
   return w0, w1
 end
 
-local function wcol(lv, x, w, yc, h, a0, ytop, ybot)
-  local a, b = yc - h + a0, yc + h
-  if a < ytop then a = ytop end
-  if b > ybot then b = ybot end
-  if b >= a then R(lv, x, a, w, b - a + 1) end
-end
-
 local function draw_wave(w, xo, yc, i0, i1, ytop, ybot, a0)
+  local lvl, cov = LVL, cover
   local rx, rlv, rh = i0, -1, -1
   for i = i0, i1 do
-    local lv, h = LVL[cover[i]], w[i]
+    local lv, h = lvl[cov[i]], w[i]
     if lv ~= rlv or h ~= rh then
-      if rh >= 0 then wcol(rlv, xo + rx, i - rx, yc, rh, a0, ytop, ybot) end
+      if rh >= 0 then
+        local a, b = yc - rh + a0, yc + rh
+        if a < ytop then a = ytop end
+        if b > ybot then b = ybot end
+        if b >= a then R(rlv, xo + rx, a, i - rx, b - a + 1) end
+      end
       rx, rlv, rh = i, lv, h
     end
   end
-  if rh >= 0 then wcol(rlv, xo + rx, i1 + 1 - rx, yc, rh, a0, ytop, ybot) end
+  if rh >= 0 then
+    local a, b = yc - rh + a0, yc + rh
+    if a < ytop then a = ytop end
+    if b > ybot then b = ybot end
+    if b >= a then R(rlv, xo + rx, a, i1 + 1 - rx, b - a + 1) end
+  end
 end
 
 local function draw_slide(w, x, y0, ym, dx, dy, nl)
@@ -233,17 +240,19 @@ local function draw_slide(w, x, y0, ym, dx, dy, nl)
   end
 end
 
-local function draw_cell(v, S)
+local function draw_cell(v)
   local x, y0 = CX[v], CY[v]
   local ym = y0 + WAVE_DY
-  local wf = S.wf[v]
+  local wf = s_wf[v]
   local ph = xfp[v]
-  if ph == nil and not (S.loaded[v] and wf) then return end
-  local live = S.on[v]
-  local nl = live and (S.nl[v] or 1) or 0
+  local is_loaded = s_loaded[v]
+  if ph == nil and not (is_loaded and wf) then return end
+  local live = s_on[v]
+  local nl = live and (s_nl[v] or 1) or 0
   if nl > LMAX then nl = LMAX end
-  local ls, le = S.ls[v], S.le[v]
+  local ls, le = s_ls[v], s_le[v]
   if nl > 0 then
+
     for i = 0, CW do cdif[i] = 0 end
     for L = 1, nl do
       local a = ls[L]
@@ -270,9 +279,9 @@ local function draw_cell(v, S)
     cover_on = false
   end
 
-  local is_sel = S.sel == v
-  local frz_v = S.frz and S.frz[v]
-  local lck = S.lck and S.lck[v]
+  local is_sel = s_sel == v
+  local frz_v = s_frz and s_frz[v]
+  local lck = s_lck and s_lck[v]
   local lvn = nl > 0 and nl or 1
   if NCELL <= FULL_CELLS then
     LVL = LVLS_FULL[lvn]
@@ -288,7 +297,7 @@ local function draw_cell(v, S)
   else
     draw_wave(wf, x, ym, 0, CW - 1, y0 + WALL_TOP, y0 + WALL_BOT, 0)
     if live and nl > 0 then
-      local pos = S.pos[v]
+      local pos = s_pos[v]
       local rd = rails(nl)
       local rail_level = is_sel and 15 or 9
       for L = 1, nl do
@@ -296,7 +305,7 @@ local function draw_cell(v, S)
       end
       local half = rd.half
       local caph = half * 2 + 1
-      if not frz_v or S.blink then
+      if not frz_v or s_blink then
         for L = 1, nl do
           local ry = y0 + rd[L]
           local e0, e1 = x + lc0[L], x + lc1[L]
@@ -322,15 +331,16 @@ local function draw_cell(v, S)
     end
   end
 
-  if live and S.loaded[v] then
-    local w0, w1 = wall_cols(S, v)
+  if live and is_loaded then
+    local w0, w1 = wall_cols(v)
+    local xw0, xw1 = x + w0, x + w1
     local ytop, ybot = y0 + WALL_TOP, y0 + WALL_BOT
     local wall_level = is_sel and WALL or 7
     local lvl_hi = is_sel and WALL or 9
 
     for yy = ytop, ybot, 2 do
-      R(wall_level, x + w0, yy, 1, 1)
-      R(wall_level, x + w1, yy, 1, 1)
+      R(wall_level, xw0, yy, 1, 1)
+      R(wall_level, xw1, yy, 1, 1)
     end
 
     if lck then
@@ -338,30 +348,31 @@ local function draw_cell(v, S)
       local hl = span < 5 and (floor(span / 2) + 1) or 3
       local vl = ybot - ytop
       vl = vl < 5 and (floor(vl / 2) + 1) or 3
-      R(wall_level, x + w0, ytop, hl, 1)
-      R(wall_level, x + w1 - hl + 1, ytop, hl, 1)
-      R(wall_level, x + w0, ybot, hl, 1)
-      R(wall_level, x + w1 - hl + 1, ybot, hl, 1)
-      R(wall_level, x + w0, ytop, 1, vl)
-      R(wall_level, x + w1, ytop, 1, vl)
-      R(wall_level, x + w0, ybot - vl + 1, 1, vl)
-      R(wall_level, x + w1, ybot - vl + 1, 1, vl)
+      local xhl = xw1 - hl + 1
+      R(wall_level, xw0, ytop, hl, 1)
+      R(wall_level, xhl, ytop, hl, 1)
+      R(wall_level, xw0, ybot, hl, 1)
+      R(wall_level, xhl, ybot, hl, 1)
+      R(wall_level, xw0, ytop, 1, vl)
+      R(wall_level, xw1, ytop, 1, vl)
+      R(wall_level, xw0, ybot - vl + 1, 1, vl)
+      R(wall_level, xw1, ybot - vl + 1, 1, vl)
     end
 
-    local hvol = floor((S.volf[v] or 0) * WALL_ROWS + 0.5)
+    local hvol = floor((s_volf[v] or 0) * WALL_ROWS + 0.5)
     if hvol > 0 then
-      R(lvl_hi, x + w0, y0 + WALL_BOT - hvol + 1, 1, hvol)
+      R(lvl_hi, xw0, y0 + WALL_BOT - hvol + 1, 1, hvol)
     end
 
     local ycenter = y0 + PITCH_CENTER_DY
-    R(wall_level, x + w1, ycenter, 1, 1)
-    local pf = clamp((S.pitchf and S.pitchf[v]) or 0, -1, 1)
+    R(wall_level, xw1, ycenter, 1, 1)
+    local pf = clamp((s_pitchf and s_pitchf[v]) or 0, -1, 1)
     local hpit = floor(abs(pf) * PITCH_HALF_ROWS + 0.5)
     if hpit > 0 then
       if pf > 0 then
-        R(lvl_hi, x + w1, ycenter - hpit, 1, hpit + 1)
+        R(lvl_hi, xw1, ycenter - hpit, 1, hpit + 1)
       else
-        R(lvl_hi, x + w1, ycenter, 1, hpit + 1)
+        R(lvl_hi, xw1, ycenter, 1, hpit + 1)
       end
     end
   end
@@ -370,9 +381,13 @@ end
 function M.draw(S)
   s_level, s_rect, s_fill = screen.level, screen.rect, screen.fill
   xfp, xfw, xfx, xfy = S.xfp, S.xfw, S.xfx, S.xfy
+  s_wf, s_on, s_loaded, s_nl = S.wf, S.on, S.loaded, S.nl
+  s_ls, s_le, s_pos = S.ls, S.le, S.pos
+  s_b0, s_b1, s_volf, s_pitchf = S.b0, S.b1, S.volf, S.pitchf
+  s_frz, s_lck, s_sel, s_blink = S.frz, S.lck, S.sel, S.blink
   lastlevel = -1
   pending = false
-  for v = 1, NCELL do draw_cell(v, S) end
+  for v = 1, NCELL do draw_cell(v) end
   Rflush()
 end
 
@@ -458,39 +473,39 @@ function M.tilteq(t)
   stroke_curve(tbuf)
 end
 
+local FILT_IQ_LO = 1 / (FILT_Q_LO * FILT_Q_LO)
+
+local function knee_of(cut)
+  return floor(clamp(log(cut / 20) * FILT_LOGN, 0, 1) * 127 + 0.5)
+end
+
+local function fill_filter(buf, knee, iq, up)
+  for c = 0, 127 do
+    local r2 = FILT_OCT[up * (c - knee)]
+    local m = 1 - r2
+    local f = 1 / (1 + FILT_K * sqrt(m * m + r2 * iq)) / FILT_FMAX
+    if f > 1 then f = 1 end
+    buf[c] = CURVE_BOT - floor(f * FILT_AMP + 0.5)
+  end
+end
+
 local fbuf, fkey_c, fkey_r = {}, -1, -1
 
 function M.filter(cut, res)
   if fkey_c ~= cut or fkey_r ~= res then
     fkey_c, fkey_r = cut, res
-    local knee = floor(clamp(log(cut / 20) * FILT_LOGN, 0, 1) * 127 + 0.5)
     local q = FILT_Q_LO + clamp(res, 0, 1) ^ FILT_Q_EXP * (FILT_Q_HI - FILT_Q_LO)
-    local iq = 1 / (q * q)
-    for c = 0, 127 do
-      local r2 = FILT_OCT[c - knee]
-      local m = 1 - r2
-      local f = 1 / (1 + FILT_K * sqrt(m * m + r2 * iq)) / FILT_FMAX
-      if f > 1 then f = 1 end
-      fbuf[c] = CURVE_BOT - floor(f * FILT_AMP + 0.5)
-    end
+    fill_filter(fbuf, knee_of(cut), 1 / (q * q), 1)
   end
   stroke_curve(fbuf)
 end
 
 local hbuf, hkey = {}, -1
-local FILT_IQ_LO = 1 / (FILT_Q_LO * FILT_Q_LO)
 
 function M.hpf(cut)
   if hkey ~= cut then
     hkey = cut
-    local knee = floor(clamp(log(cut / 20) * FILT_LOGN, 0, 1) * 127 + 0.5)
-    for c = 0, 127 do
-      local r2 = FILT_OCT[knee - c]
-      local m = 1 - r2
-      local f = 1 / (1 + FILT_K * sqrt(m * m + r2 * FILT_IQ_LO)) / FILT_FMAX
-      if f > 1 then f = 1 end
-      hbuf[c] = CURVE_BOT - floor(f * FILT_AMP + 0.5)
-    end
+    fill_filter(hbuf, knee_of(cut), FILT_IQ_LO, -1)
   end
   stroke_curve(hbuf)
 end

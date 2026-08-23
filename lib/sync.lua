@@ -34,8 +34,6 @@ local function div_label(i)
   return d and d[2] or "?"
 end
 
-S.div_beats, S.div_label = div_beats, div_label
-
 local function beat_sec()
   local ok, v = pcall(clock.get_beat_sec)
   if ok and type(v) == "number" and v > 0 then return v end
@@ -55,14 +53,14 @@ function S.dly_synced()
   return params:get("d_sync") == 2
 end
 
-function S.dly_time()
+local function dly_time()
   local t = div_beats(params:get("d_div")) * beat_sec()
   while t > DLY_MAX do t = t * 0.5 end
   return min(max(t, DLY_MIN), DLY_MAX)
 end
 
 function S.dly_refresh()
-  local t = S.dly_synced() and S.dly_time() or params:get("d_time")
+  local t = S.dly_synced() and dly_time() or params:get("d_time")
   if dly_sent ~= nil and abs(dly_sent - t) < 1e-6 then return end
   if engine.d_time then
     dly_sent = t
@@ -71,7 +69,7 @@ function S.dly_refresh()
 end
 
 function S.dly_fmt()
-  local t = S.dly_time()
+  local t = dly_time()
   local unit = (t < 1) and string.format("%d ms", floor(t * 1000 + 0.5))
                         or string.format("%.2f s", t)
   return div_label(params:get("d_div")) .. "  " .. unit
@@ -178,7 +176,7 @@ local function mo_arm()
   mo.fp = 0
 end
 
-function S.mo_depth()
+local function mo_depth()
   local d = params:get("morph_depth") * 0.01
   if d < 0 then return 0 elseif d > 1 then return 1 end
   return d
@@ -210,7 +208,7 @@ local function mo_tick(dt)
 
   local u = mo_shape(params:get("morph_shape"), k, ph)
 
-  local x = u * S.mo_depth()
+  local x = u * mo_depth()
   local tgt = min(max(EDGE + x * (1 - 2 * EDGE), 0), 1)
 
   local tau = params:get("morph_slew")

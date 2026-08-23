@@ -18,10 +18,11 @@ function K.init(cfg)
   K.state[1], K.state[2], K.state[3] = false, false, false
 end
 
+local IDS = {[0] = "", "1", "2", "12", "3", "13", "23", "123"}
+
 local function gesture_id()
-  return (K.state[1] and "1" or "") ..
-         (K.state[2] and "2" or "") ..
-         (K.state[3] and "3" or "")
+  local s = K.state
+  return IDS[(s[1] and 1 or 0) + (s[2] and 2 or 0) + (s[3] and 4 or 0)]
 end
 
 function K.coarse(id, d)

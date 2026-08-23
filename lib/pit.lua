@@ -6,7 +6,7 @@ local INV_SPAN = 1 / SPAN
 local MASS_SCALE = 10
 local CONTACT = 2
 
-local abs, max, random, floor = math.abs, math.max, math.random, math.floor
+local max, random, floor = math.max, math.random, math.floor
 
 local clamp = include("grains/lib/util").clamp
 
@@ -69,33 +69,42 @@ function P:update(lo, hi, setpoint, maxv)
   local contact = CONTACT
   if maxv > CONTACT then contact = maxv end
   if moving then
+    local nmaxv = -maxv
     for i = 1, n do
       local b = beads[i]
-      if b.vel > maxv then b.vel = maxv elseif b.vel < -maxv then b.vel = -maxv end
-      b.pos = b.pos + b.vel
-      if b.pos < lo then
-        b.pos = lo
-        b.vel = -b.vel
-      elseif b.pos > hi then
-        b.pos = hi
-        b.vel = -b.vel
+      local v = b.vel
+      if v > maxv then v = maxv elseif v < nmaxv then v = nmaxv end
+      local p = b.pos + v
+      if p < lo then
+        p = lo
+        v = -v
+      elseif p > hi then
+        p = hi
+        v = -v
       end
+      b.pos, b.vel = p, v
     end
+    local push = contact * 0.5
+    local ncontact = -contact
+    local en = self.energy
     for i = 1, n do
+      local a = beads[i]
+      local ap = a.pos
       for j = i + 1, n do
-        local a, b = beads[i], beads[j]
-        if abs(b.pos - a.pos) < contact then
+        local b = beads[j]
+        local d = b.pos - ap
+        if d < contact and d > ncontact then
           a.vel, b.vel = elastic(a.m, b.m, a.vel, b.vel)
-          local push = contact * 0.5
-          if a.pos < b.pos then
-            a.pos = a.pos - push
+          if d > 0 then
+            ap = ap - push
             b.pos = b.pos + push
           else
-            a.pos = a.pos + push
+            ap = ap + push
             b.pos = b.pos - push
           end
-          thermostat(a, self.energy, setpoint)
-          thermostat(b, self.energy, setpoint)
+          a.pos = ap
+          thermostat(a, en, setpoint)
+          thermostat(b, en, setpoint)
         end
       end
     end
@@ -103,8 +112,10 @@ function P:update(lo, hi, setpoint, maxv)
   local e = 0
   for i = 1, n do
     local b = beads[i]
-    e = e + 0.5 * b.vel * b.vel * b.m
-    b.pos = clamp(b.pos, lo, hi)
+    local v = b.vel
+    e = e + 0.5 * v * v * b.m
+    local p = b.pos
+    if p < lo then b.pos = lo elseif p > hi then b.pos = hi end
   end
   self.energy = e
   if moving and (e < setpoint * 0.6 or e > setpoint * 1.6) then
