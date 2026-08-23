@@ -6,8 +6,9 @@
 --
 --
 --
+-- K1+E1 Density - Start Here
 -- E1 Master Volume
--- K2/K3 Select
+-- K2/K3 Navigate Voices
 -- E2/E3 Set Boundaries
 -- K2+E1 Shuffle Volumes
 -- K2+E2 Selected Volume
@@ -15,13 +16,12 @@
 -- K3+E1 Shuffle Pitches
 -- K3+E2 Selected Pitch
 -- K3+E3 Other Pitches
--- K1+E1 Density - Start Here
--- K1+E2 Layers
--- K1+E3 Voices
--- K1+K3+E1 Energy
--- K1+K3+E2 Morph Depth
--- K1+K3+E3 Morph Rate
--- K2+K3 Lock Voice
+-- K1+E2 Add/Remove Layers
+-- K1+E3 Add/Remove Voices
+-- K1+K3+E1 Change Energy
+-- K1+K3+E2 Morph LFO Depth
+-- K1+K3+E3 Morph LFO Rate
+-- K2+K3 Lock Selected Voice
 -- K1+K2+K3 Reseed Voices
 -- K2+K3+E1/E2/E3 Effect Mix
 -- K1+K2+E1 Tilt EQ
