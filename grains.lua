@@ -1610,9 +1610,7 @@ function src.nudge_count(step)
   if cur < 1 and step < 0 then return end
   local want = clamp(cur + step, 1, NV)
   if want == cur then return end
-  if src.set_count(want) ~= false then
-    pop_show("fx", string.format("voices: %d", count_files()))
-  end
+  src.set_count(want)
 end
 
 local function level_delta(d)
