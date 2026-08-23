@@ -1,8 +1,8 @@
 --
 --
 --
---          Grains v0.04
---          by: @dddstudio
+--          grains v0.04
+--           @dddstudio
 --
 --
 --
