@@ -1597,7 +1597,7 @@ local function edit(suffix, d)
   params:delta(PID[sel][suffix], d)
 end
 
-local COARSE = {density = 5, layers = 8, voices = 8, mofreq = 3}
+local COARSE = {density = 5, layers = 5, voices = 5, mofreq = 3}
 local coarse = Keys.coarse
 
 local function pop_show(kind, txt)
