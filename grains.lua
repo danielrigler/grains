@@ -49,6 +49,7 @@ local installer = Installer:new{requirements = {"AnalogTape"}, zip = "https://gi
 local boot_screen = not installer:ready()
 local function installer_screen() return boot_screen or installer:pending() end
 local tape    = include("grains/lib/tape")
+local AUDIO_DIR = "/home/we/dust/audio/"
 local Pit     = include("grains/lib/pit")
 local Dice    = include("grains/lib/dice")
 local matrix  = include("grains/lib/matrix")
@@ -970,7 +971,7 @@ local function clear_voice(i)
   S.wf[i], S.raw[i] = nil, nil
   tries[i] = 0
   for L = 1, NL do S.pos[i][L] = 0 end
-  params:set(PID[i].file, _path.tape, true)
+  params:set(PID[i].file, AUDIO_DIR, true)
   engine.clear(i - 1)
 end
 
@@ -1004,8 +1005,8 @@ end
 
 local function scan_source()
   local dir = params:get("source")
-  if dir == nil or dir == "" or dir == "-" then dir = _path.tape end
-  if dir:sub(-1) ~= "/" then dir = dir:match("^(.*/)") or _path.tape end
+  if dir == nil or dir == "" or dir == "-" then dir = AUDIO_DIR end
+  if dir:sub(-1) ~= "/" then dir = dir:match("^(.*/)") or AUDIO_DIR end
   if dir ~= scanned_dir then
     local capped, deepened
     file_list, capped, deepened = tape.scan(dir, SCAN_MAX_FILES, SCAN_MAX_DEPTH)
@@ -1293,7 +1294,7 @@ local function setup_params()
   params:add_separator("  ", "  ")
 
   for i = 1, NV do
-    params:add_file(PID[i].file, "S" ..i, _path.tape) params:set_action(PID[i].file, function(path)
+    params:add_file(PID[i].file, "S" ..i, AUDIO_DIR) params:set_action(PID[i].file, function(path)
       if path == nil or path == "" or path == "-" then return end
       if path:sub(-1) == "/" then
         if S.files[i] then
@@ -1494,7 +1495,7 @@ local function setup_params()
   for n = 1, NV do
     params:add_binary("do_load" .. n, "Load " .. n .. " Random", "trigger", 0) params:set_action("do_load" .. n, function(v) if v == 1 then load_n(n) end end)
   end
-  params:add_file("source", "Folder", _path.tape) params:set_action("source", function() scanned_dir = nil end)
+  params:add_file("source", "Folder", AUDIO_DIR) params:set_action("source", function() scanned_dir = nil end)
   params:add_control("chunk", "Slice Length", controlspec.new(2, 60, "lin", 0.5, 15, "s"))
   params:add_binary("do_reslice", "Re-slice", "trigger", 0) params:set_action("do_reslice", function(v) if v == 1 then src.reslice() end end)
 
