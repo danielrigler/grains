@@ -41,13 +41,12 @@
 -- Based on Graintopia by
 -- @infinitedigits
 
-engine.name = "grains"
-
 local MusicUtil = require("musicutil")
 local Installer = include("grains/lib/installer/installer")
 local installer = Installer:new{requirements = {"AnalogTape"}, zip = "https://github.com/schollz/portedplugins/releases/download/v0.4.6/PortedPlugins-RaspberryPi.zip"}
 local boot_screen = not installer:ready()
 local function installer_screen() return boot_screen or installer:pending() end
+engine.name = installer:ready() and "grains" or nil
 local tape    = include("grains/lib/tape")
 local AUDIO_DIR = "/home/we/dust/audio/"
 local Pit     = include("grains/lib/pit")
@@ -2038,20 +2037,22 @@ end
 
 function key(n, z)
   dirty = true
-  if installer_screen() then
-    if boot_screen and n == 2 and z == 1 and not installer.installing and not installer.ready_to_restart then
-      boot_screen = false
-    else
-      installer:key(n, z)
-    end
-    return
-  end
+  if installer_screen() then installer:key(n, z) return end
   if n == 2 and z == 1 and not key_state[2] then Shuffle.vol:reset() end
   if n == 3 and z == 1 and not key_state[3] then Shuffle.pitch:reset() end
   if z == 1 then Keys.press(n) else Keys.release(n) end
 end
 
 function init()
+  if not installer:ready() then
+    clock.run(function()
+      while true do
+        redraw()
+        clock.sleep(1 / 15)
+      end
+    end)
+    return
+  end
   initial_monitor_level = params:get('monitor_level')
   params:set('monitor_level', -math.huge)
   math.randomseed(floor(util.time() * 1000) % 1000000)
