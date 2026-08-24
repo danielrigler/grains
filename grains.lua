@@ -1783,6 +1783,19 @@ local function setup_params()
   params:set_action("source", function()
     scanned_dir = nil
   end)
+  local src_p = params:lookup_param("source")
+  if src_p then
+    local SRC_CHARS = 24
+    src_p.string = function()
+      local v = params:get("source")
+      if type(v) ~= "string" or v == "" or v == "-" then return "-" end
+      local dir = v:sub(-1) == "/" and v or v:match("^(.*/)")
+      if dir == nil or dir == "" then dir = AUDIO_DIR end
+      local name = dir:match("([^/]+)/$") or "/"
+      if #name > SRC_CHARS then name = name:sub(1, SRC_CHARS - 2) .. ".." end
+      return name
+    end
+  end
 
   params:add_binary("do_rescan", "Re-scan Folder", "trigger", 0)
   params:set_action("do_rescan", function(v)
