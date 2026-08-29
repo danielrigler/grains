@@ -1,6 +1,6 @@
 # grains
 
-A six-voice granular looper for [monome norns](https://monome.org/docs/norns/).
+A six-voice granular sample player for [monome norns](https://monome.org/docs/norns/).
 
 <table>
   <tr>
