@@ -2326,7 +2326,6 @@ function key(n, z)
 end
 
 function init()
-  print("grains v0.17")
   if not installer:ready() then
     clock.run(function()
       while true do
