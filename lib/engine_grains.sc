@@ -7,7 +7,7 @@ Engine_grains : CroneEngine {
     classvar <relLeave = 1.2;
     classvar <reportChunk = 4;
     classvar <recDir = "/home/we/dust/audio/grains/";
-    classvar <recMinDur = 0.1;
+    classvar <recMinDur = 0.1; 
 
     var <buffers, <silent, <voices, pg;
     var dying, dyingUntil;
