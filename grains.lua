@@ -97,6 +97,7 @@ local LEVEL_STEP_DB = 1
 local VOL_DEFAULT_DB = -6
 local LPF_OFF, HPF_OFF = 20000, 20
 local NOFILTER_CHANCE = 50
+local RATE_SPLIT_CHANCE = 35
 local initial_reverb, initial_rev_send, initial_monitor_level
 local ui_metro
 local pits = {}
@@ -1674,8 +1675,9 @@ local DICE = {
   end,
   motion = function()
     local c = Dice.pick(Dice.MOTION)
+    local p = Dice.chance(RATE_SPLIT_CHANCE) and Dice.pick_contrast(Dice.MOTION, c) or c
     params:set("motionrate", Dice.rndexp(c.mr[1], c.mr[2]))
-    params:set("pitchrate", Dice.rndexp(c.mr[1], c.mr[2]))
+    params:set("pitchrate", Dice.rndexp(p.mr[1], p.mr[2]))
     params:set("rateslew", Dice.rndexp(c.slew[1], c.slew[2]))
     params:set("reverse", Dice.rnd(c.rev[1], c.rev[2]) * 100)
     params:set("ampfloor", Dice.rnd(c.floor[1], c.floor[2]))

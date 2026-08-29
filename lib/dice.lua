@@ -108,6 +108,25 @@ local function chance(pct) return pct > 0 and math.random() * 100 < pct end
 
 D.rnd, D.rndexp, D.pick, D.chance = rnd, rndexp, pick, chance
 
+function D.pick_contrast(t, cur, gap)
+  gap = gap or 2
+  local ci
+  for k = 1, #t do
+    if t[k] == cur then ci = k break end
+  end
+  if not ci then return pick(t) end
+  local far, any = {}, {}
+  for k = 1, #t do
+    if k ~= ci then
+      any[#any + 1] = t[k]
+      if math.abs(k - ci) >= gap then far[#far + 1] = t[k] end
+    end
+  end
+  if #far > 0 then return pick(far) end
+  if #any > 0 then return pick(any) end
+  return cur
+end
+
 local ROOTS = {-24, -12, -12, -7, -5, 0, 0, 0, 0, 0, 5, 7, 12, 12, 24}
 
 function D.tuning_rows(c)
