@@ -4,7 +4,7 @@ A six-voice granular looper for [monome norns](https://monome.org/docs/norns/).
 
 <table>
   <tr>
-    <td><img src="docs/1.png" width="278"></td>
+    <td><img src="[docs/1.png](https://raw.githubusercontent.com/danielrigler/grains/refs/heads/main/docs/1.png)" width="278"></td>
     <td><img src="docs/2.png" width="278"></td>
   </tr>
   <tr>
