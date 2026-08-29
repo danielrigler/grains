@@ -2,15 +2,6 @@
 
 A six-voice granular sample player for [monome norns](https://monome.org/docs/norns/).
 
-It loads or records up to six voices, each running several playback heads that drift and collide inside the boundaries you set. So a patch keeps moving on its own without ever repeating exactly - somewhere between a drone, a tape loop, and a chord that never quite settles. Tweak every parameter manually, or just use randomization. Really quick and fun way to explore soundscapes. Basically a happy accident machine. 
-
-Included effects: reverb, delay, shimmer, chorus, tape, glitch, wavefolder, bitcrusher, resonator, and more. You can morph between two states manually or with LFOs and there's a seamless loop recorder. Everything is controllable from the norns keys and encoders, no extra hardware needed.
-
-It is under development, so things might change. :)
-
-Inspired by and based on [Graintopia](https://github.com/schollz/graintopia).
-
-
 <table>
   <tr>
     <td><img src="docs/1.png" width="278"></td>
@@ -21,6 +12,14 @@ Inspired by and based on [Graintopia](https://github.com/schollz/graintopia).
     <td><img src="docs/6.png" width="278"></td>
   </tr>
 </table>
+
+It loads or records up to six voices, each running several playback heads that drift and collide inside the boundaries you set. So a patch keeps moving on its own without ever repeating exactly - somewhere between a drone, a tape loop, and a chord that never quite settles. Tweak every parameter manually, or just use randomization. Really quick and fun way to explore soundscapes. Basically a happy accident machine. 
+
+Included effects: reverb, delay, shimmer, chorus, tape, glitch, wavefolder, bitcrusher, resonator, and more. You can morph between two states manually or with LFOs and there's a seamless loop recorder. Everything is controllable from the norns keys and encoders, no extra hardware needed.
+
+It is under development, so things might change. :)
+
+Inspired by and based on [Graintopia](https://github.com/schollz/graintopia).
 
 ## requires
 
@@ -67,6 +66,7 @@ Do not forget to restart.
 | --- | --- |
 | `K2` / `K3` | Navigate Voices |
 | `K1+K2` | Load Random Audio |
+| `K1+K3` | Randomize |
 | `K2+K3` | Lock Selected Voice |
 | `K1+K2+K3` | Reseed Voices |
 | `K1` hold | Morph Toggle |
