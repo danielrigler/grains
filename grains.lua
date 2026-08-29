@@ -1263,7 +1263,6 @@ function REC.done(ok)
 end
 
 local function reset_volumes(slots)
-  Shuffle.vol:reset()
   if slots then
     for _, i in ipairs(slots) do params:set(PID[i].vol, VOL_DEFAULT_DB) end
     return
@@ -1323,7 +1322,6 @@ local function move_slot(src, dst)
   local lck = params:get("lock_v" .. src)
 
   for _, t in ipairs(MOVE.tables) do t[dst] = t[src] end
-  Shuffle.relocate(src, dst)
   slot_defaults(src)
 
   for _, k in ipairs(MOVE.params) do params:set(PID[dst][k], pv[k], true) end
@@ -1855,8 +1853,8 @@ local function setup_params()
     params:add_control(p.bwidth, i .. " width", controlspec.new(0, 100, "lin", 0.2, 100, "%"))
     params:set_action(p.bstart, function() trim_width(i) end)
     params:set_action(p.bwidth, function() trim_width(i) end)
-    params:add_control(p.vol, i .. " volume", controlspec.new(Shuffle.VOL_MIN_DB, Shuffle.VOL_MAX_DB, "lin", 0.5, VOL_DEFAULT_DB, "dB")) params:set_action(p.vol, function() Shuffle.vol:touched(i) push_voices() end)
-    params:add_number(p.tune, i .. " pitch", Shuffle.PITCH_LO, Shuffle.PITCH_HI, 0) params:set_action(p.tune, function() Shuffle.pitch:touched(i) push_voices() end)
+    params:add_control(p.vol, i .. " volume", controlspec.new(Shuffle.VOL_MIN_DB, Shuffle.VOL_MAX_DB, "lin", 0.5, VOL_DEFAULT_DB, "dB")) params:set_action(p.vol, push_voices)
+    params:add_number(p.tune, i .. " pitch", Shuffle.PITCH_LO, Shuffle.PITCH_HI, 0) params:set_action(p.tune, push_voices)
     HIDDEN[#HIDDEN + 1] = p.bstart
     HIDDEN[#HIDDEN + 1] = p.bwidth
     HIDDEN[#HIDDEN + 1] = p.vol
@@ -1983,7 +1981,7 @@ local function setup_params()
       return v <= DB_FLOOR and "off" or string.format("%.1f dB", v)
     end
   end
-  params:add_binary("do_clean_in", "Clean Input Recordings!", "trigger", 0) params:set_action("do_clean_in", function(v) if v == 1 then REC.clean("input") end end)  
+  params:add_binary("do_clean_in", "Clean Input Recordings!", "trigger", 0) params:set_action("do_clean_in", function(v) if v == 1 then REC.clean("input") end end)
   params:add_separator("Record Loop")
   params:add_control("bounce_len", "Loop Length", controlspec.new(1, 60, "lin", 0.5, 8, "s"))
   params:add_control("bounce_xf", "Crossfade", controlspec.new(0.1, 5, "lin", 0.1, 1, "s"))
@@ -2322,8 +2320,6 @@ function key(n, z)
     end
     return
   end
-  if n == 2 and z == 1 and not key_state[2] then Shuffle.vol:reset() end
-  if n == 3 and z == 1 and not key_state[3] then Shuffle.pitch:reset() end
   if z == 1 then Keys.press(n) else Keys.release(n) end
 end
 
