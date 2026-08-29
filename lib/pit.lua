@@ -66,8 +66,8 @@ function P:update(lo, hi, setpoint, maxv)
   local beads = self.beads
   local n = self.n
   local moving = setpoint > 0
-  local contact = CONTACT
-  if maxv > CONTACT then contact = maxv end
+  local contact = CONTACT * (hi - lo) / SPAN
+  if maxv > contact then contact = maxv end
   if moving then
     local nmaxv = -maxv
     for i = 1, n do

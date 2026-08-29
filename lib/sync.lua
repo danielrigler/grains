@@ -49,6 +49,8 @@ end
 local DLY_MIN, DLY_MAX = 0.02, 5.0
 local dly_sent = nil
 
+local dly_on = false
+
 function S.dly_synced()
   return params:get("d_sync") == 2
 end
@@ -60,7 +62,8 @@ local function dly_time()
 end
 
 function S.dly_refresh()
-  local t = S.dly_synced() and dly_time() or params:get("d_time")
+  dly_on = S.dly_synced()
+  local t = dly_on and dly_time() or params:get("d_time")
   if dly_sent ~= nil and abs(dly_sent - t) < 1e-6 then return end
   if engine.d_time then
     dly_sent = t
@@ -89,8 +92,10 @@ local WRITE_EVERY = 4
 
 local EDGE = 0.005
 
+local mo_seed = 1
+
 local function rnd(k)
-  local x = (k * 0x9E3779B1 + params:get("morph_seed") * 0x85EBCA77) & 0xFFFFFFFF
+  local x = (k * 0x9E3779B1 + mo_seed * 0x85EBCA77) & 0xFFFFFFFF
   x = x ~ (x >> 15)
   x = (x * 0x2C1B3C6D) & 0xFFFFFFFF
   x = x ~ (x >> 12)
@@ -189,6 +194,7 @@ local function mo_tick(dt)
     if on then mo_arm() else return end
   end
   if not on then return end
+  mo_seed = params:get("morph_seed")
 
   local k, ph
   if S.mo_synced() then
@@ -290,10 +296,12 @@ function S.tick()
   mo.last = now
   if dt < 0 or dt > 0.5 then dt = 1 / 60 end
 
-  local bs = beat_sec()
-  if bs ~= last_bs then
-    last_bs = bs
-    if S.dly_synced() then S.dly_refresh() end
+  if dly_on then
+    local bs = beat_sec()
+    if bs ~= last_bs then
+      last_bs = bs
+      S.dly_refresh()
+    end
   end
 
   mo_tick(dt)

@@ -5,8 +5,9 @@ Engine_grains : CroneEngine {
     classvar <wfCols = 128;
     classvar <minFrames = 4096;
     classvar <relLeave = 1.2;
-
     classvar <reportChunk = 4;
+    classvar <recDir = "/home/we/dust/audio/grains/";
+    classvar <recMinDur = 0.1;
 
     var <buffers, <silent, <voices, pg;
     var dying, dyingUntil;
@@ -18,6 +19,7 @@ Engine_grains : CroneEngine {
     var wobbleBuffer, glitchBuffer, bufSine;
     var eqLow = 0, eqMid = 0, eqHigh = 0, glRatio = 0, glMix = 1;
     var vparams, gparams, nls, actives, wins, loadTok, loadDone;
+    var recBuf, recSyn, recPath, recNorm = 0, recBegan, recOn = false, oRec, inL = 0, inR = 1;
 
     *new { arg context, doneCallback; ^super.new(context, doneCallback); }
 
@@ -26,7 +28,7 @@ Engine_grains : CroneEngine {
 
     bounce { arg dur, name, xf = 0.05;
         fork {
-            var dir = "/home/we/dust/audio/grains/";
+            var dir = recDir;
             var frames = (context.server.sampleRate * dur).round.asInteger;
             var buf = Buffer.alloc(context.server, frames, 2);
             var syn;
@@ -39,6 +41,59 @@ Engine_grains : CroneEngine {
             syn.free;
             buf.free;
             nornsAddr.sendMsg("/grains/bounce", 1);
+        };
+    }
+
+    recStart { arg name, maxDur, gain = 1, norm = 0, src = 1, mon = 0;
+        if(recOn, { ^this });
+        recOn = true;
+        recPath = recDir ++ name ++ ".wav";
+        recNorm = norm;
+        recBegan = nil;
+        fork {
+            var b, frames = (context.server.sampleRate * maxDur.clip(1, 300)).round.asInteger;
+            File.mkdir(recDir);
+            b = Buffer.alloc(context.server, frames, 2);
+            context.server.sync;
+            if(recOn, {
+                recBuf = b;
+                recBegan = Main.elapsedTime;
+                recSyn = Synth.new(\grainsrec,
+                    [\buf, b, \inL, inL, \inR, inR, \gain, gain, \src, src,
+                     \mon, mon, \out, context.out_b.index, \run, 1],
+                    context.xg, 'addToHead');
+            }, {
+                b.free;
+            });
+        };
+    }
+
+    recStop { arg save = 1;
+        var syn = recSyn, buf = recBuf, path = recPath, norm = recNorm;
+        var dur = if(recBegan.notNil, { Main.elapsedTime - recBegan }, { 0 });
+        if(recOn.not, { ^this });
+        recOn = false;
+        recSyn = nil; recBuf = nil; recBegan = nil;
+        if(syn.isNil or: { buf.isNil }, {
+            nornsAddr.sendMsg("/grains/rec_done", 0);
+            ^this
+        });
+        fork {
+            var frames = (dur * context.server.sampleRate).round.asInteger.clip(0, buf.numFrames);
+            syn.set(\run, 0, \gate, 0);
+            0.06.wait;
+            syn.free;
+            if((save > 0) and: { dur > recMinDur }, {
+                if(norm > 0, { buf.normalize(norm) });
+                context.server.sync;
+                buf.write(path, "WAV", "float", frames, 0);
+                context.server.sync;
+                0.15.wait;
+                nornsAddr.sendMsg("/grains/rec_done", 1);
+            }, {
+                nornsAddr.sendMsg("/grains/rec_done", 0);
+            });
+            buf.free;
         };
     }
 
@@ -324,6 +379,21 @@ Engine_grains : CroneEngine {
     alloc {
         nornsAddr = NetAddr("127.0.0.1", 10111);
 
+        inL = -1;
+        try {
+            if(context.in_b.isKindOf(Bus), {
+                inL = context.in_b.index;
+                inR = inL + 1;
+            }, {
+                inL = context.in_b[0].index;
+                inR = context.in_b[1].index;
+            });
+        } { inL = -1 };
+        if(inL < 0, {
+            inL = context.server.options.numOutputBusChannels;
+            inR = inL + 1;
+        });
+
         silent = Buffer.alloc(context.server, context.server.sampleRate.asInteger, 1);
         buffers = Array.fill(nv, { silent });
         voices = Array.fill(nv, { Array.fill(nlMax, { nil }) });
@@ -351,24 +421,23 @@ Engine_grains : CroneEngine {
         context.server.sync;
 
         SynthDef(\grainsloop, {
-            arg bus, buf, statebus = 0, posStart = 0, posEnd = 1, db = -12, mrate = 1, gate = 1, rel = 1, rateSlew = 1.5, miditune = 0, weight1 = 14, weight2 = 8, weight3 = 3, weight4 = 6, weight5 = 4, mididiff1 = 0, mididiff2 = -12, mididiff3 = 24, mididiff4 = 12, mididiff5 = -24, db1 = 0, db2 = 4, db3 = -18, db4 = -8, db5 = 2, revprob = 0.5, cutoff = 15000, res = 0.3, hpf = 25, panwidth = 0.5, ampfloor = 0.25, kTune = 3, kDir = 6, kAmp = 4.5, kPan = 8, phAmp = 0, phPan = 0, lagAmp = 0.4;
+            arg bus, buf, statebus = 0, posStart = 0, posEnd = 1, vamp = 0.25, mrate = 1, prate = 1, gate = 1, rel = 1, rateSlew = 1.5, vrate = 1, weight1 = 14, weight2 = 8, weight3 = 3, weight4 = 6, weight5 = 4, lrate1 = 1, lrate2 = 0.5, lrate3 = 4, lrate4 = 2, lrate5 = 0.25, lamp1 = 1, lamp2 = 1.5849, lamp3 = 0.1259, lamp4 = 0.3981, lamp5 = 1.2589, revprob = 0.5, cutoff = 15000, res = 0.3, hpf = 25, panwidth = 0.5, ampfloor = 0.25, kTune = 3, kDir = 6, kAmp = 4.5, kPan = 8, phAmp = 0, phPan = 0, lagAmp = 0.4;
 
-            var amp, frames, wsum, idx, tuneTrig;
+            var amp, frames, idx, tuneTrig;
             var lfoRate, lfoAmp2, lfoForward, lfoAmp, lfoPan, rate, rateSign;
             var pStart, pEnd, span, tiny, edge, switch, pos1, pos2, snd1, snd2, posK, resetTo;
             var snd, volume, boot;
             var xfk, xfr, settled, outside, dirNow;
             var xfTime = 0.03, chkRate = 25;
 
-            amp    = Lag.kr(db.dbamp, 1);
+            amp    = Lag.kr(vamp, 1);
             frames = BufFrames.kr(buf).max(4096);
 
-            wsum = weight1 + weight2 + weight3 + weight4 + weight5;
             boot = Impulse.kr(0);
-            tuneTrig = boot + Dust.kr(mrate / kTune);
-            idx = Demand.kr(tuneTrig, 0, Dwrand([0, 1, 2, 3, 4], [weight1, weight2, weight3, weight4, weight5] / wsum, inf));
-            lfoRate = (miditune + Select.kr(idx, [mididiff1, mididiff2, mididiff3, mididiff4, mididiff5])).midiratio;
-            lfoAmp2 = Select.kr(idx, [db1, db2, db3, db4, db5]).dbamp;
+            tuneTrig = boot + Dust.kr(prate / kTune);
+            idx = TWindex.kr(tuneTrig, [weight1, weight2, weight3, weight4, weight5], 1);
+            lfoRate = vrate * Select.kr(idx, [lrate1, lrate2, lrate3, lrate4, lrate5]);
+            lfoAmp2 = Select.kr(idx, [lamp1, lamp2, lamp3, lamp4, lamp5]);
 
             lfoForward = Demand.kr(Impulse.kr(mrate / kDir), 0, Dwrand([1, 0], [1 - revprob, revprob], inf));
             lfoAmp = SinOsc.kr(mrate / kAmp, phAmp).range(ampfloor.clip(0, 1), 1);
@@ -553,6 +622,18 @@ Engine_grains : CroneEngine {
             BufWr.ar((sig * (w * 0.5pi).cos) + (existing * (w * 0.5pi).sin), buf, wpos, loop: 0);
         }).add;
 
+        SynthDef(\grainsrec, {
+            arg buf, inL = 0, inR = 1, gain = 1, run = 0, src = 1, mon = 0, out = 0, gate = 1;
+            var l = In.ar(inL, 1) * gain, r = In.ar(inR, 1) * gain;
+            var mono = (l + r) * 0.5;
+            var sig = [Select.ar(src, [l, mono, l, r]),
+                       Select.ar(src, [r, mono, l, r])];
+            var fade = EnvGen.kr(Env.asr(0.02, 1, 0.03), gate);
+            RecordBuf.ar(sig, buf, recLevel: 1, preLevel: 0, run: run, loop: 0, doneAction: 0);
+            SendPeakRMS.kr([l, r], 20, 3, "/grains_rec");
+            Out.ar(out, sig * mon * fade);
+        }).add;
+
         SynthDef(\grainsshimmer, {
             arg bus, mix = 0.0, lowpass1 = 13000, hipass1 = 1400, pitchv1 = 0.02, fb1 = 0.0, fbDelay1 = 0.15, shimmer_oct1 = 2, mod_mix = 1;
             var input = In.ar(bus, 2);
@@ -710,12 +791,19 @@ Engine_grains : CroneEngine {
         this.addCommand(\gl_rev, "f", { arg msg; fxGlitch.set(\reverse, msg[1]) });
         this.addCommand(\gl_pitch, "f", { arg msg; fxGlitch.set(\pitch, msg[1]) });
         this.addCommand("bounce", "fsf", { arg msg; this.bounce(msg[1], msg[2].asString, msg[3]) });
+        this.addCommand("rec_start", "sfffff", { arg msg; this.recStart(msg[1].asString, msg[2], msg[3], msg[4], msg[5], msg[6]) });
+        this.addCommand("rec_stop", "i", { arg msg; this.recStop(msg[1].asInteger) });
 
         oState = OSCFunc({ |msg| nornsAddr.sendMsg(*(["/grains/state"] ++ msg[3..])); }, '/grains_state', context.server.addr);
+        oRec = OSCFunc({ |msg| nornsAddr.sendMsg("/grains/rec_level", msg[3], msg[5]); }, '/grains_rec', context.server.addr);
     }
 
     free {
+        recOn = false;
         if(oState.notNil, { oState.free });
+        if(oRec.notNil, { oRec.free });
+        if(recSyn.notNil, { recSyn.free });
+        if(recBuf.notNil, { recBuf.free });
         voices.do({ arg row; row.do({ arg x; if(x.notNil, { x.free }) }) });
         [reporter, fxMain, fxDelay, fxShimmer, fxTilt, fxDimension, fxEq, fxTape,
          fxShaper, fxWobble, fxBitcrush, fxWavefold, fxResonator, fxGlitch,

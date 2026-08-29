@@ -79,8 +79,11 @@ local FILT_OCT = {}
 for d = -127, 127 do FILT_OCT[d] = exp(2 * log(1000) / 127 * d) end
 
 local cover, cdif = {}, {}
-local cover_on = false
-local lc0, lc1 = {}, {}
+local lc0, lc1, lcok = {}, {}, {}
+local COV, KC0, KC1, KOK, KNL = {}, {}, {}, {}, {}
+for v = 1, M.NMAX do
+  COV[v], KC0[v], KC1[v], KOK[v], KNL[v] = {}, {}, {}, {}, -1
+end
 local LVL = LVLS_FULL[1]
 local TL, BL = {}, {}
 
@@ -108,7 +111,7 @@ function M.set_count(n)
   if down < PITCH_HALF_ROWS then PITCH_HALF_ROWS = down end
   RAILS = {}
   for i = 0, CW - 1 do cover[i] = 0 end
-  cover_on = false
+  for v = 1, M.NMAX do KNL[v] = -1 end
   M.CW, M.CH = CW, CH
   return true
 end
@@ -251,32 +254,46 @@ local function draw_cell(v)
   local nl = live and (s_nl[v] or 1) or 0
   if nl > LMAX then nl = LMAX end
   local ls, le = s_ls[v], s_le[v]
+  local cache = COV[v]
+  cover = cache
   if nl > 0 then
-
-    for i = 0, CW do cdif[i] = 0 end
+    local k0, k1, kok = KC0[v], KC1[v], KOK[v]
+    local same = KNL[v] == nl
     for L = 1, nl do
       local a = ls[L]
+      local c0, c1, ok
       if a then
-        local c0 = floor(a * CW)
+        c0 = floor(a * CW)
         if c0 < 0 then c0 = 0 elseif c0 > CW - 1 then c0 = CW - 1 end
-        local c1 = floor(le[L] * CW + 0.999) - 1
+        c1 = floor(le[L] * CW + 0.999) - 1
         if c1 < c0 then c1 = c0 elseif c1 > CW - 1 then c1 = CW - 1 end
-        lc0[L], lc1[L] = c0, c1
-        cdif[c0] = cdif[c0] + 1
-        cdif[c1 + 1] = cdif[c1 + 1] - 1
+        ok = true
       else
-        lc0[L], lc1[L] = 0, 0
+        c0, c1, ok = 0, 0, false
       end
+      lc0[L], lc1[L], lcok[L] = c0, c1, ok
+      if same and (k0[L] ~= c0 or k1[L] ~= c1 or kok[L] ~= ok) then same = false end
     end
-    local run = 0
-    for i = 0, CW - 1 do
-      run = run + cdif[i]
-      cover[i] = run
+    if not same then
+      for i = 0, CW do cdif[i] = 0 end
+      for L = 1, nl do
+        if lcok[L] then
+          local c0, c1 = lc0[L], lc1[L]
+          cdif[c0] = cdif[c0] + 1
+          cdif[c1 + 1] = cdif[c1 + 1] - 1
+        end
+        k0[L], k1[L], kok[L] = lc0[L], lc1[L], lcok[L]
+      end
+      local run = 0
+      for i = 0, CW - 1 do
+        run = run + cdif[i]
+        cache[i] = run
+      end
+      KNL[v] = nl
     end
-    cover_on = true
-  elseif cover_on then
-    for i = 0, CW - 1 do cover[i] = 0 end
-    cover_on = false
+  elseif KNL[v] ~= 0 then
+    for i = 0, CW - 1 do cache[i] = 0 end
+    KNL[v] = 0
   end
 
   local is_sel = s_sel == v
@@ -447,6 +464,65 @@ function M.fxpopup(txt)
   screen.level(15)
   screen.move(64, 34)
   screen.text_center(txt)
+  lastlevel = -1
+end
+
+local REC_W, REC_H, REC_Y = 92, 27, 20
+
+function M.recpopup(title, sub, frac, note)
+  local x = 64 - floor(REC_W / 2)
+  local bw = REC_W - 10
+  local plain = not (sub or note or frac)
+  local h = plain and 16 or REC_H
+  Rflush()
+  screen.level(0)
+  screen.rect(x, REC_Y, REC_W, h)
+  screen.fill()
+  screen.level(4)
+  screen.line_width(1)
+  screen.rect(x + 0.5, REC_Y + 0.5, REC_W - 1, h - 1)
+  screen.stroke()
+  screen.level(15)
+  if plain then
+    screen.move(64, REC_Y + 11)
+    screen.text_center(title)
+  else
+    screen.move(x + 5, REC_Y + 11)
+    screen.text(title)
+  end
+  if sub then
+    screen.level(6)
+    screen.move(x + REC_W - 5, REC_Y + 11)
+    screen.text_right(sub)
+  end
+  if note then
+    screen.level(5)
+    screen.move(x + 5, REC_Y + 21)
+    screen.text(note)
+  elseif type(frac) == "table" then
+    for k = 1, 2 do
+      local y = REC_Y + 12 + k * 4
+      local fw = floor(clamp(frac[k] or 0, 0, 1) * bw + 0.5)
+      screen.level(2)
+      screen.rect(x + 5, y, bw, 3)
+      screen.fill()
+      if fw > 0 then
+        screen.level(15)
+        screen.rect(x + 5, y, fw, 3)
+        screen.fill()
+      end
+    end
+  elseif frac then
+    local fw = floor(clamp(frac, 0, 1) * bw + 0.5)
+    screen.level(2)
+    screen.rect(x + 5, REC_Y + 16, bw, 4)
+    screen.fill()
+    if fw > 0 then
+      screen.level(15)
+      screen.rect(x + 5, REC_Y + 16, fw, 4)
+      screen.fill()
+    end
+  end
   lastlevel = -1
 end
 
