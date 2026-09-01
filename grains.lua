@@ -2049,7 +2049,7 @@ local function setup_params()
   params:add_option("morph_sync", "Time Base", {"free", "clock"}, 2) params:set_action("morph_sync", function() Sync.vis() end)
   params:add_number("morph_div", "Division", 1, Sync.NDIV, Sync.DIV_4BAR, function() return Sync.mo_fmt() end)
   params:add_control("morph_rate", "Free Cycle", controlspec.new(0.25, 600, "exp", 0, 20, "s"))
-  params:add_control("morph_slew", "Smoothing", controlspec.new(0, 8, "lin", 0.01, 0.05, "s"))
+  params:add_control("morph_slew", "Smoothing", controlspec.new(0, 8, "lin", 0.01, 0.1, "s"))
   params:add_number("morph_seed", "Motion Seed", 1, 9999, 1)
 
   params:add_group("grains_bounce", "RECORD", 12)

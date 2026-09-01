@@ -84,7 +84,12 @@ local fx = {
   eq_high       = 0,
   tilt          = 0,
   cutoff        = 20000,
-  vhpf          = 20
+  vhpf          = 20,
+  d_sync        = 1,
+  morph_auto    = 1,
+  morph_sync    = 2,
+  vlfo          = 1,
+  vlfo_sync     = 1
 }
 
 local watched, nwatched = {}, 0
@@ -169,6 +174,33 @@ local function stereo_intensity(c)
   return max(w, c.dimension_mix / 100, h, c.rspeed) * 100
 end
 
+local CLOCK_ORDER = {{1, 2}, {2, 3}, {3, 2}, {2, 1}}
+local CLOCK_DIM, CLOCK_LIT, CLOCK_STEPS = 3, 15, 4
+local _clk, _clk_pos, _clk_r, _clk_c = false, -1, 1, 2
+
+local function clock_active(c)
+  return (c.d_sync == 2 and c.d_mix > 0)
+      or (c.morph_auto == 2 and c.morph_sync == 2)
+      or (c.vlfo == 2 and c.vlfo_sync == 2)
+end
+
+local function clock_pos()
+  local ok, b = pcall(clock.get_beats)
+  if not ok or type(b) ~= "number" then return 0 end
+  return floor(b) % CLOCK_STEPS
+end
+
+local function clock_level(row, col)
+  if row == _clk_r and col == _clk_c then return CLOCK_LIT end
+  return CLOCK_DIM
+end
+
+local function clock_custom()
+  local p = CLOCK_ORDER[_clk_pos + 1]
+  if p then _clk_r, _clk_c = p[1], p[2] end
+  return clock_level
+end
+
 local MOD_FREQ = 0.25
 local MOD_PERIOD = 1 / MOD_FREQ
 local _draw_now = 0
@@ -193,6 +225,7 @@ local _bc_lfo = make_mix_mod()
 local _sh_lfo = make_mix_mod()
 
 local FX_SPECS = {
+  {glyph = "K", show = clock_active,                                custom_level = clock_custom},
   {glyph = "F", show = filter_active,                              val = filter_intensity},
   {glyph = "E", show = eq_active,                                  val = eq_intensity},
   {glyph = "B", show = function(c) return c.bc_mix > 0 end,         val = function(c) return c.bc_mod == 2 and c.bc_mix * _bc_lfo(_draw_now) or c.bc_mix end},
@@ -232,17 +265,24 @@ end
 
 function font.tick()
   local now = util.time()
-  if now - _last_update < UPDATE_INTERVAL then return false end
-  _last_update = now
-  _draw_now = now
-  poll()
+  if now - _last_update >= UPDATE_INTERVAL then
+    _last_update = now
+    _draw_now = now
+    poll()
+    _clk = clock_active(fx)
+  elseif _clk then
+    if clock_pos() == _clk_pos then return false end
+  else
+    return false
+  end
+  _clk_pos = _clk and clock_pos() or -1
   local shown, width = 0, 0
   for i = 1, NFX do
     local spec = FX_SPECS[i]
     if spec.show(fx) then
       shown = shown + 1
       _shown[shown] = spec.glyph
-      _level[shown] = value_to_level(spec.val(fx))
+      _level[shown] = spec.custom_level and spec.custom_level() or value_to_level(spec.val(fx))
       width = width + spec.w
     end
   end
