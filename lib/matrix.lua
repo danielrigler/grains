@@ -112,7 +112,7 @@ function M.set_count(n)
   RAILS = {}
   for i = 0, CW - 1 do cover[i] = 0 end
   for v = 1, M.NMAX do KNL[v] = -1 end
-  M.CW, M.CH = CW, CH
+  M.CW, M.CH, M.WALL_ROWS = CW, CH, WALL_ROWS
   return true
 end
 

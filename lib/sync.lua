@@ -2,7 +2,7 @@ local S = {}
 
 local floor, abs = math.floor, math.abs
 local min, max = math.min, math.max
-local cos, exp, pi = math.cos, math.exp, math.pi
+local cos, exp, log, pi = math.cos, math.exp, math.log, math.pi
 
 local DIV = {
   {0.125,  "1/32"},   {1/6,    "1/16t"},  {0.25,   "1/16"},
@@ -17,6 +17,7 @@ local DIV = {
 
 S.NDIV      = #DIV
 S.DIV_QUART = 9
+S.DIV_BAR   = 14
 S.DIV_4BAR  = 18
 
 S.SHAPES = {
@@ -80,8 +81,10 @@ end
 
 local mo = {
   v = 0, sent = nil, last = nil, catch = 0, was = false,
-  fp = 0, k = 0, kk = nil, wa = 0.5, wb = 0.5
+  fp = 0, k = 0
 }
+
+local wkk, wa, wb = {}, {}, {}
 
 S.driving = false
 
@@ -94,8 +97,8 @@ local EDGE = 0.005
 
 local mo_seed = 1
 
-local function rnd(k)
-  local x = (k * 0x9E3779B1 + mo_seed * 0x85EBCA77) & 0xFFFFFFFF
+local function rnd(k, sd)
+  local x = (k * 0x9E3779B1 + sd * 0x85EBCA77) & 0xFFFFFFFF
   x = x ~ (x >> 15)
   x = (x * 0x2C1B3C6D) & 0xFFFFFFFF
   x = x ~ (x >> 12)
@@ -123,20 +126,19 @@ local function reflect(v)
   return v
 end
 
-local function walk_to(k)
-  if mo.kk == k then return end
-  if mo.kk == nil or k < mo.kk or k - mo.kk > 64 then
-    mo.kk = k - 1
-    mo.wa = mo.wb
+local function walk_to(k, sd, s)
+  local kk, b = wkk[s], wb[s] or 0.5
+  if kk == k then return end
+  if kk == nil or k < kk or k - kk > 64 then kk = k - 1 end
+  while kk < k do
+    kk = kk + 1
+    wa[s] = b
+    b = reflect(b + (rnd(kk, sd) * 2 - 1) * WALK_STEP)
   end
-  while mo.kk < k do
-    mo.kk = mo.kk + 1
-    mo.wa = mo.wb
-    mo.wb = reflect(mo.wb + (rnd(mo.kk) * 2 - 1) * WALK_STEP)
-  end
+  wkk[s], wb[s] = kk, b
 end
 
-local function mo_shape(shape, k, ph)
+local function mo_shape(shape, k, ph, sd, s)
   if shape == 1 then
     return 0.5 - 0.5 * cos(2 * pi * ph)
   elseif shape == 2 then
@@ -148,12 +150,12 @@ local function mo_shape(shape, k, ph)
   elseif shape == 5 then
     return (ph < 0.5) and 0 or 1
   elseif shape == 6 then
-    return reflect(crom(rnd(k - 1), rnd(k), rnd(k + 1), rnd(k + 2), ph))
+    return reflect(crom(rnd(k - 1, sd), rnd(k, sd), rnd(k + 1, sd), rnd(k + 2, sd), ph))
   elseif shape == 7 then
-    walk_to(k)
-    return mo.wa + (mo.wb - mo.wa) * smoothstep(ph)
+    walk_to(k, sd, s)
+    return wa[s] + (wb[s] - wa[s]) * smoothstep(ph)
   end
-  return rnd(k)
+  return rnd(k, sd)
 end
 
 function S.mo_on()
@@ -175,9 +177,7 @@ local function mo_arm()
   mo.v = min(max(params:get("morph") * 0.01, EDGE), 1 - EDGE)
   mo.sent = nil
   mo.catch = CATCH_DUR
-  mo.wb = mo.v
-  mo.wa = mo.v
-  mo.kk = nil
+  wa[0], wb[0], wkk[0] = mo.v, mo.v, nil
   mo.fp = 0
 end
 
@@ -212,7 +212,7 @@ local function mo_tick(dt)
     k, ph = mo.k, mo.fp
   end
 
-  local u = mo_shape(params:get("morph_shape"), k, ph)
+  local u = mo_shape(params:get("morph_shape"), k, ph, mo_seed, 0)
 
   local x = u * mo_depth()
   local tgt = min(max(EDGE + x * (1 - 2 * EDGE), 0), 1)
@@ -240,7 +240,118 @@ local function mo_tick(dt)
   end
 end
 
+local VFAST = 2
+local VLAG_MIN, VLAG_OFF, VLAG_K = 0.02, 1, 0.55
+local LK = log(10) / 20
+
+S.von = false
+S.vdirty = true
+S.vshow = false
+S.vlagdirty = false
+S.vpush = nil
+S.vbase, S.vph, S.va, S.vg, S.vd = {}, {}, {}, {}, {}
+
+local VSHOW = 4
+local vshape, vfreq, vdepth, vndb = 1, 0.5, 0, 0
+local vpos, vcyc, vframe, vsub, vdiv = 0, 0, 0, 0, 2
+local vhz, vbeats, vsync = 0.5, 1, false
+
+local function vnorm()
+  if vdepth <= 0 then vndb = 0 return end
+  local a, m = vdepth * LK, nil
+  if vshape == 1 then
+    local t, x = 1, a * a * 0.25
+    m = 1
+    for j = 1, 9 do t = t * x / (j * j) m = m + t end
+  elseif vshape == 5 then
+    m = (exp(a) + exp(-a)) * 0.5
+  else
+    m = (exp(a) - exp(-a)) * 0.5 / a
+  end
+  vndb = -log(m) / LK
+end
+
+local function vrate()
+  vsync = params:get("vlfo_sync") == 2
+  vbeats = div_beats(params:get("vlfo_div"))
+  local f = vfreq
+  if vsync then
+    local t = vbeats * beat_sec()
+    if t > 0.001 then f = 1 / t end
+  end
+  vhz = f
+  vdiv = (f > VFAST) and 1 or 2
+  S.vlagdirty = true
+end
+
+function S.vsynced() return vsync end
+
+function S.vfmt()
+  local t = div_beats(params:get("vlfo_div")) * beat_sec()
+  local unit = (t < 60) and string.format("%.2f s", t)
+                        or string.format("%.1f min", t / 60)
+  return div_label(params:get("vlfo_div")) .. "  " .. unit
+end
+
+function S.vset(sh, f, d)
+  vfreq = f
+  if sh ~= vshape or d ~= vdepth then
+    vshape, vdepth = sh, d
+    vnorm()
+  end
+  vrate()
+end
+
+function S.venable(on)
+  S.von = on
+  if on then
+    vpos, vcyc, vframe, vsub = 0, 0, 0, 0
+    S.vdirty = true
+  end
+end
+
+function S.vlag()
+  if not S.von then return VLAG_OFF end
+  return min(max(VLAG_K / vhz, VLAG_MIN), VLAG_OFF)
+end
+
+function S.vdb(i, o)
+  if vdepth <= 0 then return vndb end
+  local ph = vpos
+  if vshape < 6 then
+    ph = ph + o
+    if ph >= 1 then ph = ph - 1 end
+  end
+  return (mo_shape(vshape, vcyc, ph, i * 65537, i) * 2 - 1) * vdepth + vndb
+end
+
+local function v_tick(dt)
+  if vsync then
+    local b = beats_now() / vbeats
+    vcyc = floor(b)
+    vpos = b - vcyc
+  else
+    vpos = vpos + dt * vhz
+    if vpos >= 1 then
+      local w = floor(vpos)
+      vpos = vpos - w
+      vcyc = vcyc + w
+    end
+  end
+  vframe = vframe + 1
+  if vframe >= vdiv then
+    vframe = 0
+    vsub = vsub + vdiv
+    if vsub >= VSHOW then
+      vsub = 0
+      S.vshow = true
+    end
+    if S.vpush then S.vpush() end
+  end
+end
+
 local MO_CTL = {"morph_depth", "morph_shape", "morph_sync", "morph_slew"}
+local V_CTL = {"vlfo_shape", "vlfo_depth", "vlfo_sync"}
 
 function S.vis()
   local d = S.dly_synced()
@@ -253,6 +364,12 @@ function S.vis()
   end
   if m then params:show("morph_div") else params:hide("morph_div") end
   if on and not m then params:show("morph_rate") else params:hide("morph_rate") end
+  local v = S.von
+  for _, id in ipairs(V_CTL) do
+    if v then params:show(id) else params:hide(id) end
+  end
+  if v and vsync then params:show("vlfo_div") else params:hide("vlfo_div") end
+  if v and not vsync then params:show("vlfo_freq") else params:hide("vlfo_freq") end
   if _menu and type(_menu.rebuild_params) == "function" then
     _menu.rebuild_params()
   end
@@ -296,15 +413,18 @@ function S.tick()
   mo.last = now
   if dt < 0 or dt > 0.5 then dt = 1 / 60 end
 
-  if dly_on then
+  local vclk = S.von and vsync
+  if dly_on or vclk then
     local bs = beat_sec()
     if bs ~= last_bs then
       last_bs = bs
-      S.dly_refresh()
+      if dly_on then S.dly_refresh() end
+      if vclk then vrate() end
     end
   end
 
   mo_tick(dt)
+  if S.von then v_tick(dt) end
 end
 
 return S

@@ -421,7 +421,7 @@ Engine_grains : CroneEngine {
         context.server.sync;
 
         SynthDef(\grainsloop, {
-            arg bus, buf, statebus = 0, posStart = 0, posEnd = 1, vamp = 0.25, mrate = 1, prate = 1, gate = 1, rel = 1, rateSlew = 1.5, vrate = 1, weight1 = 14, weight2 = 8, weight3 = 3, weight4 = 6, weight5 = 4, lrate1 = 1, lrate2 = 0.5, lrate3 = 4, lrate4 = 2, lrate5 = 0.25, lamp1 = 1, lamp2 = 1.5849, lamp3 = 0.1259, lamp4 = 0.3981, lamp5 = 1.2589, revprob = 0.5, cutoff = 15000, res = 0.3, hpf = 25, panwidth = 0.5, ampfloor = 0.25, kTune = 3, kDir = 6, kAmp = 4.5, kPan = 8, phAmp = 0, phPan = 0, lagAmp = 0.4;
+            arg bus, buf, statebus = 0, posStart = 0, posEnd = 1, vamp = 0.25, mrate = 1, prate = 1, gate = 1, rel = 1, rateSlew = 1.5, vrate = 1, weight1 = 14, weight2 = 8, weight3 = 3, weight4 = 6, weight5 = 4, lrate1 = 1, lrate2 = 0.5, lrate3 = 4, lrate4 = 2, lrate5 = 0.25, lamp1 = 1, lamp2 = 1.5849, lamp3 = 0.1259, lamp4 = 0.3981, lamp5 = 1.2589, revprob = 0.5, cutoff = 15000, res = 0.3, hpf = 25, panwidth = 0.5, ampfloor = 0.25, kTune = 3, kDir = 6, kAmp = 4.5, kPan = 8, phAmp = 0, phPan = 0, lagAmp = 0.4, vampLag = 1;
 
             var amp, frames, idx, tuneTrig;
             var lfoRate, lfoAmp2, lfoForward, lfoAmp, lfoPan, rate, rateSign;
@@ -430,7 +430,7 @@ Engine_grains : CroneEngine {
             var xfk, xfr, settled, outside, dirNow;
             var xfTime = 0.03, chkRate = 25;
 
-            amp    = Lag.kr(vamp, 1);
+            amp    = Lag.kr(vamp, vampLag);
             frames = BufFrames.kr(buf).max(4096);
 
             boot = Impulse.kr(0);

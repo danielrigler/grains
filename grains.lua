@@ -1,7 +1,7 @@
 --
 --
 --
---          grains v0.10
+--          grains v0.11
 --           @dddstudio
 --
 --
@@ -106,7 +106,7 @@ local MORPH_SKIP = {morph = true, source = true, chunk = true, lseed = true, lev
 
 local function morph_skip(id)
   return (MORPH_SKIP[id]
-      or id:find("^morph") or id:find("^do_")
+      or id:find("^morph") or id:find("^vlfo") or id:find("^do_")
       or id:find("^lock_") or id:find("^freeze") or id:find("^rec_")) ~= nil
 end
 local morph_first, morph_last
@@ -117,7 +117,7 @@ local S = {
   wf = {}, raw = {}, pos = {}, on = {}, loaded = {},
   ls = {}, le = {}, files = {},
   b0 = {}, b1 = {}, sel = 0, nl = {},
-  volf = {},
+  volf = {}, volb = {},
   pitchf = {},
 
   pin = {}
@@ -253,11 +253,11 @@ local function eset(key, val)
 end
 
 local sent_one = {}
-local function eset_one(i, key, val)
+local function eset_one(i, key, val, eps)
   local t = sent_one[key]
   if not t then t = {} sent_one[key] = t end
   local was = t[i]
-  if was and abs(was - val) < 1e-6 then return end
+  if was and abs(was - val) < (eps or 1e-6) then return end
   t[i] = val
   engine.set_one(i - 1, key, val)
 end
@@ -443,7 +443,9 @@ local function push_per_voice()
     local pid = PID[i]
     local trim = LAYER_TRIM[act_nl[i]] or 0
     local ivol, itune = params:get(pid.vol), params:get(pid.tune)
-    S.volf[i] = vol_frac(ivol, Shuffle.VOL_MAX_DB)
+    local vf = vol_frac(ivol, Shuffle.VOL_MAX_DB)
+    S.volb[i] = vf
+    if not Sync.von or S.volf[i] == nil then S.volf[i] = vf end
     S.pitchf[i] = clamp(itune / Shuffle.PITCH_HI, -1, 1)
     if s then
       local frz = vfrozen[i]
@@ -472,8 +474,70 @@ local function push_per_voice()
       eset_one(i, "cutoff",   clamp(cut * 2 ^ (s.cut * var * 2.6), 90, LPF_OFF))
       local db = clamp(lvl + ivol + trim + s.lvl * var * 7, -100, 6)
       if lvl <= -59.5 or ivol <= -59.5 then db = -100 end
-      eset_one(i, "vamp", TUNE.amp(db))
+      Sync.vbase[i] = db
+      if not Sync.von then eset_one(i, "vamp", TUNE.amp(db)) end
       eset_one(i, "ampfloor", clamp(flr + s.floor * var * 0.35, 0, 1))
+    end
+  end
+  if Sync.von then Sync.vpush() end
+end
+
+function Sync.vphases()
+  Sync.vdirty = false
+  local ph, n, c = Sync.vph, 0, 0
+  for i = 1, nva do
+    if S.on[i] then n = n + 1 end
+  end
+  if n < 1 then n = 1 end
+  for i = 1, NV do
+    if i <= nva and S.on[i] then
+      ph[i] = c / n
+      c = c + 1
+    else
+      ph[i] = 0
+    end
+  end
+end
+
+function Sync.vpush()
+  if Sync.vdirty then Sync.vphases() end
+  if Sync.vlagdirty then Sync.vlagdirty = false eset("vampLag", Sync.vlag()) end
+  local base, ph, va, vg, vd, lfo = Sync.vbase, Sync.vph, Sync.va, Sync.vg, Sync.vd, Sync.vdb
+  local n, sa, sg = 0, 0, 0
+  for i = 1, nva do
+    local b = base[i]
+    if b and b > -99 then
+      local d = lfo(i, ph[i])
+      local a, g = TUNE.amp(b), TUNE.amp(d)
+      va[i], vg[i], vd[i] = a, g, d
+      n, sa, sg = n + 1, sa + a, sg + a * g
+    else
+      va[i] = nil
+    end
+  end
+  local k = (n > 1 and sg > 1e-12) and (sa / sg) or 1
+  local show = Sync.vshow
+  local kdb, volf, volb, rows, sc
+  if show then
+    Sync.vshow = false
+    kdb = (k ~= 1) and (20 * math.log(k, 10)) or 0
+    volf, volb = S.volf, S.volb
+    rows = matrix.WALL_ROWS or 1
+    sc = 1 / (Shuffle.VOL_MAX_DB - DB_FLOOR)
+  end
+  for i = 1, nva do
+    local a = va[i]
+    if a then
+      a = a * vg[i] * k
+      if a > 1.9953 then a = 1.9953 end
+      eset_one(i, "vamp", a, a * 0.004 + 1e-6)
+      if show then
+        local f = (volb[i] or 0) + (vd[i] + kdb) * sc
+        if f < 0 then f = 0 elseif f > 1 then f = 1 end
+        local was = volf[i]
+        if was == nil or floor(f * rows + 0.5) ~= floor(was * rows + 0.5) then dirty = true end
+        volf[i] = f
+      end
     end
   end
 end
@@ -642,6 +706,7 @@ local function flush_population()
     local on = n > 0
     if S.on[i] ~= on then
       S.on[i] = on
+      Sync.vdirty = true
       engine.active(i - 1, on and 1 or 0)
       if on then
         local lw = last_win[i]
@@ -954,6 +1019,7 @@ local function refresh_layout()
     end
   end
   layout_busy = false
+  Sync.vdirty = true
   engine.report_geom(n, cap)
   push_population()
   push_voices()
@@ -1279,7 +1345,7 @@ local function slot_defaults(i)
   S.files[i] = nil
   S.nl[i] = 0
   S.b0[i], S.b1[i] = 0, 1
-  S.volf[i], S.pitchf[i] = nil, nil
+  S.volf[i], S.volb[i], S.pitchf[i] = nil, nil, nil
   local pos, ls, le, tls, tle = {}, {}, {}, {}, {}
   S.pos[i], S.ls[i], S.le[i] = pos, ls, le
   cls[i], cle[i] = tls, tle
@@ -1309,7 +1375,7 @@ local function move_slot(src, dst)
   if MOVE.tables == nil then
     MOVE.tables = {
       S.wf, S.raw, S.pos, S.on, S.loaded, S.ls, S.le, S.files,
-      S.b0, S.b1, S.nl, S.volf, S.pitchf, S.pin,
+      S.b0, S.b1, S.nl, S.volf, S.pitchf, S.volb, S.pin, Sync.vbase,
       pits, xfp, xfw, xfx, xfy,
       cls, cle, lastcol, poscol, last_win,
       ovr, vseed, vmr, blo, bhi, tries, act_nl
@@ -1803,7 +1869,7 @@ local function setup_params()
 
   params:add_separator(" ")
 
-  params:add_group("grains_main", "VOICES", 14)
+  params:add_group("grains_main", "VOICES", 20)
   params:add_control("level", "Level", controlspec.new(DB_FLOOR, LEVEL_MAX_DB, "lin", 0.5, -20, "dB"))
   params:add_number("density", "Density", 0, NV * NL, 0) params:set_action("density", function(v) if not layout_busy then local m = params:lookup_param("density").max dfrac = m > 0 and clamp(v / m, 0, 1) or 0 end push_population() end)
   params:add_control("tuning", "Tuning", controlspec.new(-36, 24, "lin", 1, 0, "st"))
@@ -1828,6 +1894,25 @@ local function setup_params()
   params:add_control("panwidth", "Pan Width", controlspec.new(0, 100, "lin", 1, 90, "%"))
   params:add_control("ampfloor", "Level Floor", controlspec.new(0, 100, "lin", 1, 25, "%"))
   params:add_binary("freeze_all", "Freeze All", "toggle", 0) params:set_action("freeze_all", freeze_refresh)
+  local function vlfo_apply()
+    Sync.vset(params:get("vlfo_shape"), params:get("vlfo_freq"), params:get("vlfo_depth"))
+    Sync.vlagdirty = false
+    eset("vampLag", Sync.vlag())
+    if not Sync.von then push_voices() end
+  end
+  params:add_option("vlfo", "Volume LFO", {"off", "on"}, 1)
+  params:set_action("vlfo", function(v)
+    Sync.venable(v == 2)
+    Shuffle.vol.step = Sync.von and 0.5 or 1
+    push_voices()
+    vlfo_apply()
+    Sync.vis()
+  end)
+  params:add_option("vlfo_shape", "Shape", Sync.SHAPES, 1) params:set_action("vlfo_shape", vlfo_apply)
+  params:add_control("vlfo_depth", "Depth", controlspec.new(0, 36, "lin", 0.5, 16, "dB")) params:set_action("vlfo_depth", vlfo_apply)
+  params:add_control("vlfo_freq", "Free Cycle", controlspec.new(0.02, 10, "exp", 0, 0.2, "Hz")) params:set_action("vlfo_freq", vlfo_apply)
+  params:add_option("vlfo_sync", "Time Base", {"free", "clock"}, 1) params:set_action("vlfo_sync", function() vlfo_apply() Sync.vis() end)
+  params:add_number("vlfo_div", "Division", 1, Sync.NDIV, Sync.DIV_BAR, function() return Sync.vfmt() end) params:set_action("vlfo_div", vlfo_apply)
 
   params:add_group("grains_tune", "TUNING", 15)
   local defaults = {
@@ -1889,7 +1974,7 @@ local function setup_params()
 
   params:add_group("grains_tape", "TAPE", 8)
   params:add_option("tape_mix", "Analog", {"off", "on"}, 1) engopt("tape_mix")
-  pct("shaper_mix", "Shaper drive", 0)
+  pct("shaper_mix", "Shaper Drive", 0)
   pct("wobble_mix", "Wobble", 0)
   pct("wobble_amp", "Wow Depth", 20)
   params:add_control("wobble_rpm", "Wow Speed", controlspec.new(30, 90, "lin", 1, 33, "rpm")) eng("wobble_rpm")
@@ -1964,7 +2049,7 @@ local function setup_params()
   params:add_option("morph_sync", "Time Base", {"free", "clock"}, 2) params:set_action("morph_sync", function() Sync.vis() end)
   params:add_number("morph_div", "Division", 1, Sync.NDIV, Sync.DIV_4BAR, function() return Sync.mo_fmt() end)
   params:add_control("morph_rate", "Free Cycle", controlspec.new(0.25, 600, "exp", 0, 20, "s"))
-  params:add_control("morph_slew", "Smoothing", controlspec.new(0, 8, "lin", 0.01, 0.1, "s"))
+  params:add_control("morph_slew", "Smoothing", controlspec.new(0, 8, "lin", 0.01, 0.05, "s"))
   params:add_number("morph_seed", "Motion Seed", 1, 9999, 1)
 
   params:add_group("grains_bounce", "RECORD", 12)

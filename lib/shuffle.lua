@@ -7,6 +7,7 @@ M.PITCH_LO, M.PITCH_HI = -24, 24
 M.VOL_RATE = 3
 M.PITCH_RATE = 2.5
 M.GLIDE = 0.92
+M.VOL_SLACK = 76
 
 local floor, max, min, abs, sqrt, random =
   math.floor, math.max, math.min, math.abs, math.sqrt, math.random
@@ -43,8 +44,30 @@ function E:kick(d)
 end
 
 function E:nudge(i, d)
-  local id = self.ids[i]
-  params:set(id, max(self.emin, min(self.emax, params:get(id) + d)))
+  local ids, sh, at = self.ids, self.shadow, self.at
+  local lo, hi, k = self.emin, self.emax, self.slack
+  local n = nvoices()
+  if i > n then n = i end
+  local mx, mn = -1e30, 1e30
+  for j = 1, n do
+    local cur = params:get(ids[j])
+    local v = sh[j]
+    if at[j] ~= cur then v = cur sh[j] = cur at[j] = cur end
+    if j == i then
+      v = v + d * (self.step or 1)
+      if v < lo - k then v = lo - k elseif v > hi + k then v = hi + k end
+      sh[j] = v
+    end
+    if v > mx then mx = v end
+    if v < mn then mn = v end
+  end
+  local off = (mx < lo and lo - mx) or (mn > hi and hi - mn) or 0
+  if off ~= 0 then
+    for j = 1, n do sh[j] = sh[j] + off end
+  end
+  local v = sh[i]
+  params:set(ids[i], max(lo, min(hi, v)))
+  at[i] = params:get(ids[i])
   mark()
 end
 
@@ -53,14 +76,14 @@ function M.init(cfg)
   M.vol = setmetatable({
     ids = cfg.vol_ids, rate = M.VOL_RATE, level = true,
     lo = M.VOL_LO, hi = M.VOL_HI, quant = 0.5,
-    emin = M.VOL_MIN_DB, emax = M.VOL_MAX_DB,
-    pos = {}, vel = {}
+    emin = M.VOL_MIN_DB, emax = M.VOL_MAX_DB, slack = M.VOL_SLACK,
+    pos = {}, vel = {}, shadow = {}, at = {}
   }, E)
   M.pitch = setmetatable({
     ids = cfg.tune_ids, rate = M.PITCH_RATE,
     lo = M.PITCH_LO, hi = M.PITCH_HI, quant = 1,
-    emin = M.PITCH_LO, emax = M.PITCH_HI,
-    pos = {}, vel = {}
+    emin = M.PITCH_LO, emax = M.PITCH_HI, slack = 0,
+    pos = {}, vel = {}, shadow = {}, at = {}
   }, E)
 end
 
