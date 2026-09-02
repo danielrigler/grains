@@ -184,9 +184,17 @@ local function clock_active(c)
       or (c.vlfo == 2 and c.vlfo_sync == 2)
 end
 
+local _get_beats
+do
+  local c = rawget(_G, "clock")
+  _get_beats = c and c.get_beats
+  if _get_beats and not pcall(_get_beats) then _get_beats = nil end
+end
+
 local function clock_pos()
-  local ok, b = pcall(clock.get_beats)
-  if not ok or type(b) ~= "number" then return 0 end
+  if _get_beats == nil then return 0 end
+  local b = _get_beats()
+  if type(b) ~= "number" then return 0 end
   return floor(b) % CLOCK_STEPS
 end
 
@@ -263,8 +271,8 @@ local function collect(level, x, y)
   end
 end
 
-function font.tick()
-  local now = util.time()
+function font.tick(now)
+  now = now or util.time()
   if now - _last_update >= UPDATE_INTERVAL then
     _last_update = now
     _draw_now = now

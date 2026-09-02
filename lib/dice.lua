@@ -51,11 +51,11 @@ function D.snap(x, ci)
 end
 
 D.MOTION = {
-  {name = "glacial",  mr = {0.05, 3},  slew = {1.5, 9},
+  {name = "glacial",  mr = {0.05, 2},  slew = {1.5, 9},
    rev = {0, 0.2},    floor = {45, 95}},
-  {name = "drifting", mr = {1, 3},   slew = {1.0, 4.0},
+  {name = "drifting", mr = {1, 2},   slew = {1.0, 4.0},
    rev = {0.05, 0.5}, floor = {20, 70}},
-  {name = "restless", mr = {2.5, 4.5},   slew = {0.15, 1.2},
+  {name = "restless", mr = {2.5, 4},   slew = {0.15, 1.2},
    rev = {0.2, 0.7},  floor = {5, 45}},
   {name = "skittish", mr = {4, 8},   slew = {0.05, 0.25},
    rev = {0.3, 0.85}, floor = {0, 30}}

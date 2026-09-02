@@ -267,7 +267,7 @@ Engine_grains : CroneEngine {
         nornsAddr.sendMsg("/grains/fail", i);
     }
 
-    readChunk { arg i, path, chunkDur = 12, randomStart = 1;
+    readChunk { arg i, path, chunkDur = 12, randomStart = 1, startSec = 0;
         var token;
         if(File.exists(path).not, { ^this.readFailed(i) });
         loadTok[i] = loadTok[i] + 1;
@@ -284,7 +284,9 @@ Engine_grains : CroneEngine {
                     num = min(num, frames);
                     start = if((randomStart > 0) and: { frames > num }, {
                         (frames - num).rand
-                    }, { 0 });
+                    }, {
+                        (startSec * sr).asInteger.clip(0, max(frames - num, 0))
+                    });
                     Buffer.readChannel(context.server, path, start, num, [0], { |b|
                         var old;
                         if(b.isNil or: { token != loadTok[i] }, {
@@ -317,6 +319,7 @@ Engine_grains : CroneEngine {
                 var sf = SoundFile.openRead(path.asString);
                 if(sf.isNil, { this.readFailed(i, token) }, {
                     var ch = max(sf.numChannels, 1);
+                    var sr = max(sf.sampleRate, 1);
                     var block = min(1024, max(1, num div: wfCols));
                     var peaks = Array.fill(wfCols, { arg c;
                         var raw = FloatArray.newClear(block * ch);
@@ -332,7 +335,7 @@ Engine_grains : CroneEngine {
                     });
                     sf.close;
                     if(token == loadTok[i], {
-                        nornsAddr.sendMsg(*(["/grains/waveform", i] ++ peaks));
+                        nornsAddr.sendMsg(*(["/grains/waveform", i] ++ peaks ++ [start / sr]));
                     });
                 });
             });
@@ -735,7 +738,7 @@ Engine_grains : CroneEngine {
         this.addCommand("active", "ii", { arg msg; var i = msg[1].asInteger; var on = msg[2] > 0; if((i >= 0) and: { i < nv } and: { on != actives[i] }, { actives[i] = on; if(on, { if(buffers[i] !== silent, { this.startVoice(i) }); }, { this.stopVoice(i); this.clearState(i); }); }); });
         this.addCommand("layers", "ii", { arg msg; var i = msg[1].asInteger; if((i >= 0) and: { i < nv }, { this.setLayers(i, msg[2].asInteger); }); });
         this.addCommand("clear", "i", { arg msg; var i = msg[1].asInteger; if((i >= 0) and: { i < nv }, { var old = buffers[i]; loadTok[i] = loadTok[i] + 1; buffers[i] = silent; nls[i] = 1; this.stopVoice(i); this.clearState(i); if(old.notNil and: { old !== silent }, { fork { 2.5.wait; old.free }; }); }); });
-        this.addCommand("read", "isff", { arg msg; this.readChunk(msg[1].asInteger, msg[2].asString, msg[3], msg[4]); });
+        this.addCommand("read", "isfff", { arg msg; this.readChunk(msg[1].asInteger, msg[2].asString, msg[3], msg[4], msg[5]); });
         this.addCommand("move", "ii", { arg msg; this.moveVoice(msg[1].asInteger, msg[2].asInteger); });
         this.addCommand("report_rate", "f", { arg msg; reportRate = msg[1]; if(reporter.notNil, { reporter.set(\rate, reportRate) }); });
         this.addCommand("report_geom", "ii", { arg msg; this.setGeom(msg[1].asInteger, msg[2].asInteger); });

@@ -35,15 +35,28 @@ local function div_label(i)
   return d and d[2] or "?"
 end
 
+local get_beat_sec, get_beats
+do
+  local c = rawget(_G, "clock")
+  get_beat_sec = c and c.get_beat_sec
+  get_beats = c and c.get_beats
+  if get_beat_sec and not pcall(get_beat_sec) then get_beat_sec = nil end
+  if get_beats and not pcall(get_beats) then get_beats = nil end
+end
+
 local function beat_sec()
-  local ok, v = pcall(clock.get_beat_sec)
-  if ok and type(v) == "number" and v > 0 then return v end
+  if get_beat_sec then
+    local v = get_beat_sec()
+    if type(v) == "number" and v > 0 then return v end
+  end
   return 0.5
 end
 
 local function beats_now()
-  local ok, v = pcall(clock.get_beats)
-  if ok and type(v) == "number" then return v end
+  if get_beats then
+    local v = get_beats()
+    if type(v) == "number" then return v end
+  end
   return 0
 end
 
@@ -91,6 +104,7 @@ S.driving = false
 local WALK_STEP = 0.34
 local CATCH_TAU = 0.35
 local CATCH_DUR = 1.2
+
 local WRITE_EVERY = 4
 
 local EDGE = 0.005
@@ -252,6 +266,18 @@ S.vpush = nil
 S.vbase, S.vph, S.va, S.vg, S.vd = {}, {}, {}, {}, {}
 
 local VSHOW = 4
+local VDIV_SLOW = 2
+
+function S.set_rate(hz)
+  if type(hz) ~= "number" or hz < 1 then return end
+  local q = floor(hz / 15 + 0.5)
+  if q < 1 then q = 1 end
+  WRITE_EVERY = q
+  VSHOW = q
+
+  VDIV_SLOW = floor(hz / 30 + 0.5)
+  if VDIV_SLOW < 1 then VDIV_SLOW = 1 end
+end
 local vshape, vfreq, vdepth, vndb = 1, 0.5, 0, 0
 local vpos, vcyc, vframe, vsub, vdiv = 0, 0, 0, 0, 2
 local vhz, vbeats, vsync = 0.5, 1, false
@@ -280,7 +306,7 @@ local function vrate()
     if t > 0.001 then f = 1 / t end
   end
   vhz = f
-  vdiv = (f > VFAST) and 1 or 2
+  vdiv = (f > VFAST) and 1 or VDIV_SLOW
   S.vlagdirty = true
 end
 
@@ -407,8 +433,8 @@ end
 
 local last_bs = nil
 
-function S.tick()
-  local now = util.time()
+function S.tick(now)
+  now = now or util.time()
   local dt = mo.last and (now - mo.last) or 0
   mo.last = now
   if dt < 0 or dt > 0.5 then dt = 1 / 60 end

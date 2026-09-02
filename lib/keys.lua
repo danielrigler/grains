@@ -66,8 +66,8 @@ function K.release(n)
   end
 end
 
-function K.tick()
-  if hold_due and util.time() >= hold_due then
+function K.tick(now)
+  if hold_due and (now or util.time()) >= hold_due then
     hold_due = nil
     local g = gesture
     if g and not g.fired then
