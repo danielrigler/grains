@@ -10,8 +10,8 @@
 -- E1 Master Volume
 -- K2/K3 Navigate Voices
 -- E2/E3 Set Boundaries
--- K1+K2 Randomize
--- K1+K3 Load Random
+-- K1+K2 Load Random
+-- K1+K3 Randomize
 -- K2+K3 Lock Selected Voice
 -- K2+K3 hold: Undo
 -- K1+K2+K3 hold: Redo
@@ -1730,6 +1730,11 @@ end
 
 local src = {}
 
+function src.reload()
+  Undo.mark()
+  load_n(nva < 1 and C.DEFAULT_NV or nva, true)
+end
+
 function src.reslice()
   if count_files() < 1 then return end
   layout_busy = true
@@ -2226,8 +2231,9 @@ local function setup_params()
     end)
   end
 
-  params:add_group("grains_src", "SOURCE", NV + 5)
+  params:add_group("grains_src", "SOURCE", NV + 6)
   params:add_binary("do_clear", "Unload All", "trigger", 0) params:set_action("do_clear", function(v) if v == 1 then Undo.mark() clear_all() end end)
+  params:add_binary("do_reload", "Load Random", "trigger", 0) params:set_action("do_reload", function(v) if v == 1 then src.reload() end end)
   for n = 1, NV do
     params:add_binary("do_load" .. n, "Load " .. n .. " Random", "trigger", 0) params:set_action("do_load" .. n, function(v) if v == 1 then Undo.mark() load_n(n) end end)
   end
@@ -2448,7 +2454,7 @@ C.KEY_COMBOS = {
              long  = REC.start},
   ["3"]   = {short = function() step_sel(1) end,
              long  = function() REC.start(true) end},
-  ["12"]  = {short = function() Undo.mark() load_n(nva < 1 and C.DEFAULT_NV or nva, true) end,
+  ["12"]  = {short = src.reload,
              long  = function() toggle_voice("freeze") end},
   ["13"]  = {short = function() Undo.mark() dice() end,
              long  = function() toggle_param("freeze_all") end},
