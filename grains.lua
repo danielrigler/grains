@@ -1959,7 +1959,7 @@ end
 
 local function setup_params()
 
-  local HIDDEN = {"grains_tune", "grains_bounds", "grains_reverb", "reverb_mix", "level", "chord", "lseed", "morph_seed", "grains_hold"}
+  local HIDDEN = {"grains_tune", "grains_reverb", "reverb_mix", "level", "chord", "lseed", "morph_seed", "grains_hold"}
   local SLOT_CHARS = 24
 
   local function eng(id, k)
@@ -2072,21 +2072,6 @@ local function setup_params()
     HIDDEN[#HIDDEN + 1] = "vdb" .. i
   end
 
-  params:add_group("grains_bounds", "PER VOICE", NV * 4)
-  for i = 1, NV do
-    local p = PID[i]
-    params:add_control(p.bstart, i .. " start", controlspec.new(0, 100, "lin", 0.2, 0, "%"))
-    params:add_control(p.bwidth, i .. " width", controlspec.new(0, 100, "lin", 0.2, 100, "%"))
-    params:set_action(p.bstart, function() trim_width(i) end)
-    params:set_action(p.bwidth, function() trim_width(i) end)
-    params:add_control(p.vol, i .. " volume", controlspec.new(Shuffle.VOL_MIN_DB, Shuffle.VOL_MAX_DB, "lin", 0.5, C.VOL_DEFAULT_DB, "dB")) params:set_action(p.vol, push_voices)
-    params:add_number(p.tune, i .. " pitch", Shuffle.PITCH_LO, Shuffle.PITCH_HI, 0) params:set_action(p.tune, push_voices)
-    HIDDEN[#HIDDEN + 1] = p.bstart
-    HIDDEN[#HIDDEN + 1] = p.bwidth
-    HIDDEN[#HIDDEN + 1] = p.vol
-    HIDDEN[#HIDDEN + 1] = p.tune
-  end
-
   params:add_group("grains_reverb", "R3VERB", 1)
   params:add_taper("reverb_mix", "Mix", -40, 18, -40, 0, "dB") params:set_action("reverb_mix", nrev_set_mix)
 
@@ -2175,6 +2160,17 @@ local function setup_params()
   params:add_number("lseed", "layer order", 1, 9999, 1) params:set_action("lseed", function() push_population() dirty = true end)
   for _, k in ipairs({"tune", "motion", "space", "shape", "voice"}) do
     params:add_option("lock_" .. k, k, {"roll", "hold"}, 1)
+  end
+
+  params:add_group("grains_bounds", "PER VOICE", NV * 4)
+  for i = 1, NV do
+    local p = PID[i]
+    params:add_control(p.bstart, i .. " start", controlspec.new(0, 100, "lin", 0.2, 0, "%"))
+    params:add_control(p.bwidth, i .. " width", controlspec.new(0, 100, "lin", 0.2, 100, "%"))
+    params:set_action(p.bstart, function() trim_width(i) end)
+    params:set_action(p.bwidth, function() trim_width(i) end)
+    params:add_control(p.vol, i .. " volume", controlspec.new(Shuffle.VOL_MIN_DB, Shuffle.VOL_MAX_DB, "lin", 0.5, C.VOL_DEFAULT_DB, "dB")) params:set_action(p.vol, push_voices)
+    params:add_number(p.tune, i .. " pitch", Shuffle.PITCH_LO, Shuffle.PITCH_HI, 0) params:set_action(p.tune, push_voices)
   end
 
   params:add_group("grains_morph", "MORPH", 12)
