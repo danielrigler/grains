@@ -110,7 +110,6 @@ function M.set_count(n)
   local down = WALL_BOT - PITCH_CENTER_DY
   if down < PITCH_HALF_ROWS then PITCH_HALF_ROWS = down end
   RAILS = {}
-  for i = 0, CW - 1 do cover[i] = 0 end
   for v = 1, M.NMAX do KNL[v] = -1 end
   M.CW, M.CH, M.WALL_ROWS = CW, CH, WALL_ROWS
   return true

@@ -10,15 +10,16 @@ local max, random, floor = math.max, math.random, math.floor
 
 local clamp = include("grains/lib/util").clamp
 
-local function new_bead(lo, hi)
+local function set_bead(b, lo, hi)
   local r = random(3, 12)
-  return {
-    pos = clamp(lo + random() * max(hi - lo, 1), lo, hi),
-    vel = random(-100, 100) / 200,
-    r = r,
-    m = r * r * MASS_SCALE
-  }
+  b.pos = clamp(lo + random() * max(hi - lo, 1), lo, hi)
+  b.vel = random(-100, 100) / 200
+  b.r = r
+  b.m = r * r * MASS_SCALE
+  return b
 end
+
+local function new_bead(lo, hi) return set_bead({}, lo, hi) end
 
 local function elastic(mA, mB, vA1, vB1)
   local vC1 = vA1 - vB1
@@ -28,17 +29,39 @@ local function elastic(mA, mB, vA1, vB1)
   return vC2 + vB1, vB2
 end
 
+local function reindex(self)
+  local ord = self.ord
+  for i = 1, self.n do ord[i] = i end
+end
+
+local function sort_ord(ord, beads, n)
+  for i = 2, n do
+    local v = ord[i]
+    local p = beads[v].pos
+    local j = i - 1
+    while j >= 1 and beads[ord[j]].pos > p do
+      ord[j + 1] = ord[j]
+      j = j - 1
+    end
+    ord[j + 1] = v
+  end
+end
+
 function P.new(n)
   local m = setmetatable({}, P)
   m.n = n or 2
   m.beads = {}
+  m.ord = {}
   for i = 1, m.n do m.beads[i] = new_bead(8, 120) end
+  reindex(m)
   m.energy = 0
   return m
 end
 
 function P:reroll(lo, hi)
-  for i = 1, self.n do self.beads[i] = new_bead(lo or 8, hi or 120) end
+  local b = self.beads
+  for i = 1, self.n do set_bead(b[i], lo or 8, hi or 120) end
+  reindex(self)
   self.energy = 0
 end
 
@@ -48,6 +71,7 @@ function P:resize(n, lo, hi)
   for i = self.n + 1, n do b[i] = new_bead(lo or 8, hi or 120) end
   for i = n + 1, self.n do b[i] = nil end
   self.n = n
+  reindex(self)
   self.energy = 0
 end
 
@@ -64,6 +88,7 @@ function P:update(lo, hi, setpoint, maxv)
     if hi > SPAN then hi = SPAN; lo = SPAN - 4 end
   end
   local beads = self.beads
+  local ord = self.ord
   local n = self.n
   local moving = setpoint > 0
   local contact = CONTACT * (hi - lo) / SPAN
@@ -84,28 +109,17 @@ function P:update(lo, hi, setpoint, maxv)
       end
       b.pos, b.vel = p, v
     end
+    sort_ord(ord, beads, n)
     local push = contact * 0.5
-    local ncontact = -contact
     local en = self.energy
-    for i = 1, n do
-      local a = beads[i]
-      local ap = a.pos
-      for j = i + 1, n do
-        local b = beads[j]
-        local d = b.pos - ap
-        if d < contact and d > ncontact then
-          a.vel, b.vel = elastic(a.m, b.m, a.vel, b.vel)
-          if d > 0 then
-            ap = ap - push
-            b.pos = b.pos + push
-          else
-            ap = ap + push
-            b.pos = b.pos - push
-          end
-          a.pos = ap
-          thermostat(a, en, setpoint)
-          thermostat(b, en, setpoint)
-        end
+    for k = 1, n - 1 do
+      local a, b = beads[ord[k]], beads[ord[k + 1]]
+      if b.pos - a.pos < contact then
+        a.vel, b.vel = elastic(a.m, b.m, a.vel, b.vel)
+        a.pos = a.pos - push
+        b.pos = b.pos + push
+        thermostat(a, en, setpoint)
+        thermostat(b, en, setpoint)
       end
     end
   end
@@ -125,16 +139,20 @@ end
 
 function P:load(t, n)
   if n == nil or n < 1 then return false end
-  local beads = {}
+  for i = 1, n * 3 do
+    if t[i] == nil then return false end
+  end
+  local beads = self.beads
   for i = 1, n do
     local k = (i - 1) * 3
-    local pos, vel, r = t[k + 1], t[k + 2], t[k + 3]
-    if pos == nil or vel == nil or r == nil then return false end
-    r = clamp(floor(r), 1, 64)
-    beads[i] = {pos = pos, vel = vel, r = r, m = r * r * MASS_SCALE}
+    local b = beads[i]
+    if b == nil then b = {} beads[i] = b end
+    local r = clamp(floor(t[k + 3]), 1, 64)
+    b.pos, b.vel, b.r, b.m = t[k + 1], t[k + 2], r, r * r * MASS_SCALE
   end
-  self.beads = beads
+  for i = n + 1, self.n do beads[i] = nil end
   self.n = n
+  reindex(self)
   self.energy = 0
   return true
 end

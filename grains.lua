@@ -1,7 +1,7 @@
 --
 --
 --
---          grains v0.12
+--          grains v0.13
 --           @dddstudio
 --
 --
@@ -230,14 +230,38 @@ local function stratified(n, lo, hi)
 end
 
 C.VSEED_FIELDS = {"tune", "mr", "cut", "lvl", "floor"}
-local function reroll_seeds()
-  for i = 1, NV do vseed[i] = vseed[i] or {} end
+local NSEED = #C.VSEED_FIELDS
+local vseedT = {}
+local sglide = 0
+
+local function reroll_seeds(snap)
+  for i = 1, NV do
+    vseed[i] = vseed[i] or {}
+    vseedT[i] = vseedT[i] or {}
+  end
   for _, f in ipairs(C.VSEED_FIELDS) do
     local vals = stratified(NV, -1, 1)
     for i = 1, NV do
-      if not vlocked[i] then vseed[i][f] = vals[i] end
+      if not vlocked[i] then
+        vseedT[i][f] = vals[i]
+        if snap or vseed[i][f] == nil then vseed[i][f] = vals[i] end
+      end
     end
   end
+  sglide = snap and 0 or GLIDE_FRAMES
+end
+
+local function seed_settle()
+  for i = 1, NV do
+    local c, t = vseed[i], vseedT[i]
+    if c and t then
+      for k = 1, NSEED do
+        local f = C.VSEED_FIELDS[k]
+        if t[f] ~= nil then c[f] = t[f] end
+      end
+    end
+  end
+  sglide = 0
 end
 
 local bounce_until = 0
@@ -414,7 +438,7 @@ local function ovr_capture()
 end
 
 local LAYER_TRIM = {}
-for n = 1, NL do LAYER_TRIM[n] = -10 * (math.log(n) / math.log(10)) end
+for n = 1, NL do LAYER_TRIM[n] = -10 * math.log(n, 10) end
 
 local voices_dirty = false
 local function push_voices() voices_dirty = true end
@@ -766,7 +790,7 @@ local function state_dump(f)
   for i = 1, NV do
     local sd = S.files[i] and vseed[i]
     if sd then
-      f:write(string.format("seed %d %.9g %.9g %.9g %.9g %.9g\n", i,
+      f:write(string.format("seed %d %.5g %.5g %.5g %.5g %.5g\n", i,
         sd.tune, sd.mr, sd.cut, sd.lvl, sd.floor))
     end
     local pit = sd and pits[i]
@@ -775,7 +799,7 @@ local function state_dump(f)
       for k = 1, pit.n do
         local b = pit.beads[k]
 
-        f:write(string.format(" %.9g %.9g %d", b.pos, b.vel, b.r))
+        f:write(string.format(" %.5g %.5g %d", b.pos, b.vel, b.r))
       end
       f:write("\n")
     end
@@ -934,11 +958,17 @@ local function state_apply(r)
   lock_refresh()
   dirty = true
   for i = 1, NV do
-    if r.seed[i] then vseed[i] = r.seed[i] end
+    if r.seed[i] then
+      local sd, st = r.seed[i], {}
+      vseed[i] = sd
+      for _, f in ipairs(C.VSEED_FIELDS) do st[f] = sd[f] end
+      vseedT[i] = st
+    end
     ovr[i] = (vlocked[i] and r.hold[i]) or nil
 
     S.pin[i] = vlocked[i] and (r.pin[i] or S.pin[i]) or nil
   end
+  sglide = 0
   ovr_sync()
   push_voice_params()
   push_voices()
@@ -1112,6 +1142,26 @@ local function physics_tick()
 
   flush_population()
   if pset_pend then pset_apply() end
+
+  if sglide > 0 then
+    sglide = sglide - 1
+    if sglide == 0 then
+      seed_settle()
+    else
+      for i = 1, NV do
+        local c, t = vseed[i], vseedT[i]
+        if c and t then
+          for k = 1, NSEED do
+            local f = C.VSEED_FIELDS[k]
+            local a, b = c[f], t[f]
+            if a and b then c[f] = a + (b - a) * GLIDE_K end
+          end
+        end
+      end
+    end
+    voices_dirty = true
+  end
+
   if voices_dirty then push_per_voice() end
 
   if xfing then
@@ -1499,9 +1549,11 @@ local function slot_defaults(i)
   blo[i], bhi[i] = 0, 1
   tries[i] = 0
   act_nl[i] = 0
-  vseed[i] = {}
+  local sd, st = {}, {}
+  vseed[i], vseedT[i] = sd, st
   for _, f in ipairs(C.VSEED_FIELDS) do
-    vseed[i][f] = math.random() * 2 - 1
+    local v = math.random() * 2 - 1
+    sd[f], st[f] = v, v
   end
 end
 
@@ -1514,7 +1566,7 @@ local function move_slot(src, dst)
       S.b0, S.b1, S.nl, S.volf, S.pitchf, S.volb, S.pin, Sync.vbase,
       pits, xfp, xfw, xfx, xfy,
       cls, cle, lastcol, poscol, last_win,
-      ovr, vseed, vmr, vstart, blo, bhi, tries, act_nl
+      ovr, vseed, vseedT, vmr, vstart, blo, bhi, tries, act_nl
     }
   end
 
@@ -2284,10 +2336,12 @@ end
 local function setup_osc()
   osc.event = function(path, args)
     if path == "/grains/state" then
+      local st = args[1]
+      if type(st) ~= "number" or st < 1 then return end
       for i = 1, nva do
         local pos, pc = S.pos[i], poscol[i]
         local live = S.on[i]
-        local base = (i - 1) * lcap
+        local base = (i - 1) * st + 1
         for L = 1, (S.nl[i] or 0) do
           local p = args[base + L] or 0
           pos[L] = p
@@ -2600,7 +2654,7 @@ function init()
   if pcall(function() return params:lookup_param("rev_eng_input") end) then
     C.initial_rev_send = params:get("rev_eng_input")
   end
-  reroll_seeds()
+  reroll_seeds(true)
   setup_params()
   setup_osc()
   Sync.set_rate(CTRL_HZ)
