@@ -82,7 +82,6 @@ local CTRL_HZ = C.FPS / C.CTRL_DIV
 local TSTEP = C.PHYS_HZ / CTRL_HZ
 local ctrl_n = 0
 local phys_acc = 0
-local ENERGY_BASE = 200
 local RATE_OFF = 0.05
 C.REPORT_RATE = 30
 local sel = 0
@@ -1198,16 +1197,7 @@ local function physics_tick()
         local window = pit.window
         local a, b = blo[i] * SPAN, bhi[i] * SPAN
         local m = vmr[i] or 1
-        local w = bhi[i] - blo[i]
-        if w < 0.05 then w = 0.05 elseif w > 1 then w = 1 end
-        local energy = 0
-        if m > 0 then
-          energy = ENERGY_BASE * m * m
-          if energy < 10 then energy = 10 end
-          energy = energy * w
-        end
-        local vmax   = clamp(2.5 * m, 0.15, 10) * sqrt(w)
-        for _ = 1, steps do pit:update(a, b, energy, vmax) end
+        for _ = 1, steps do pit:update(a, b, m) end
 
         local lw = last_win[i]
         local changed = false
