@@ -785,8 +785,6 @@ Engine_grains : CroneEngine {
                 [\in, voiceBus[i].index, \out, busMain.index], vfg, 'addToTail');
         });
 
-        fxEq = Synth.newPaused(\grainseq, [\bus, busMain.index], context.xg, 'addToTail');
-        fxTilt = Synth.newPaused(\grainstilt, [\bus, busMain.index, \tilt, 0], context.xg, 'addToTail');
         fxBitcrush = Synth.newPaused(\grainsbitcrush, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
         fxResonator = Synth.newPaused(\grainsresonator, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
         fxWavefold = Synth.newPaused(\grainswavefold, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
@@ -795,6 +793,8 @@ Engine_grains : CroneEngine {
         fxTape = Synth.newPaused(\grainstape, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
         fxWobble = Synth.newPaused(\grainswobble, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
         fxShimmer = Synth.newPaused(\grainsshimmer, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
+        fxEq = Synth.newPaused(\grainseq, [\bus, busMain.index], context.xg, 'addToTail');
+        fxTilt = Synth.newPaused(\grainstilt, [\bus, busMain.index, \tilt, 0], context.xg, 'addToTail');
         fxDelay = Synth.newPaused(\grainsdelay, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
         fxRotate = Synth.newPaused(\grainsrotate, [\bus, busMain.index, \rspeed, 0], context.xg, 'addToTail');
         fxDimension = Synth.newPaused(\grainsdimension, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
