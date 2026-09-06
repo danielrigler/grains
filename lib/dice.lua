@@ -136,7 +136,7 @@ function D.pick_contrast(t, cur, gap)
   return cur
 end
 
-local ROOTS = {-24, -12, -12, -7, -5, 0, 0, 0, 0, 0, 5, 7, 12, 12, 24}
+local ROOTS = {-48, -36, -24, -12, -12, -7, -5, 0, 0, 0, 0, 0, 5, 7, 12, 12, 24, 36, 48}
 
 function D.tuning_rows(c)
   local decay = rnd(0.5, 2.4) / math.max(c.favor, 0.05)
