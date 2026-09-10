@@ -359,6 +359,13 @@ local function draw_cell(v)
       R(wall_level, xw1, yy, 1, 1)
     end
 
+    if frz_v and s_blink then
+      R(wall_level, xw0, ytop, 2, 1)
+      R(wall_level, xw0, ybot, 2, 1)
+      R(wall_level, xw1 - 1, ytop, 2, 1)
+      R(wall_level, xw1 - 1, ybot, 2, 1)
+    end
+
     if lck then
       local span = w1 - w0
       local hl = span < 5 and (floor(span / 2) + 1) or 3

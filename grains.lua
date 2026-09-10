@@ -553,10 +553,11 @@ function Sync.vpush()
   for i = 1, nva do
     local b = base[i]
     if b and b > -99 then
-      local d = lfo(i, ph[i])
+      local frz = vfrozen[i]
+      local d = frz and vd[i] or lfo(i, ph[i])
       local a, g = TUNE.amp(b), TUNE.amp(d)
       va[i], vg[i], vd[i] = a, g, d
-      n, sa, sg = n + 1, sa + a, sg + a * g
+      if not frz then n, sa, sg = n + 1, sa + a, sg + a * g end
     else
       va[i] = nil
     end
@@ -574,11 +575,12 @@ function Sync.vpush()
   for i = 1, nva do
     local a = va[i]
     if a then
-      a = a * vg[i] * k
+      local frz = vfrozen[i]
+      a = a * vg[i] * (frz and 1 or k)
       if a > 1.9953 then a = 1.9953 end
       eset_one(i, "vamp", a, a * 0.004 + 1e-6)
       if show then
-        local f = (volb[i] or 0) + (vd[i] + kdb) * sc
+        local f = (volb[i] or 0) + (vd[i] + (frz and 0 or kdb)) * sc
         if f < 0 then f = 0 elseif f > 1 then f = 1 end
         local was = volf[i]
         if was == nil or floor(f * rows + 0.5) ~= floor(was * rows + 0.5) then dirty = true end
