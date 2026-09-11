@@ -25,6 +25,17 @@ S.SHAPES = {
   "square", "smooth rand", "drunk", "sample+hold"
 }
 
+local PP = {}
+
+local function pv(id)
+  local p = PP[id]
+  if p == nil then
+    p = params:lookup_param(id)
+    PP[id] = p
+  end
+  return p:get()
+end
+
 local function div_beats(i)
   local d = DIV[i]
   return d and d[1] or 1
@@ -66,18 +77,18 @@ local dly_sent = nil
 local dly_on = false
 
 function S.dly_synced()
-  return params:get("d_sync") == 2
+  return pv("d_sync") == 2
 end
 
 local function dly_time()
-  local t = div_beats(params:get("d_div")) * beat_sec()
+  local t = div_beats(pv("d_div")) * beat_sec()
   while t > DLY_MAX do t = t * 0.5 end
   return min(max(t, DLY_MIN), DLY_MAX)
 end
 
 function S.dly_refresh()
   dly_on = S.dly_synced()
-  local t = dly_on and dly_time() or params:get("d_time")
+  local t = dly_on and dly_time() or pv("d_time")
   if dly_sent ~= nil and abs(dly_sent - t) < 1e-6 then return end
   if engine.d_time then
     dly_sent = t
@@ -89,7 +100,7 @@ function S.dly_fmt()
   local t = dly_time()
   local unit = (t < 1) and string.format("%d ms", floor(t * 1000 + 0.5))
                         or string.format("%.2f s", t)
-  return div_label(params:get("d_div")) .. "  " .. unit
+  return div_label(pv("d_div")) .. "  " .. unit
 end
 
 local mo = {
@@ -173,22 +184,22 @@ local function mo_shape(shape, k, ph, sd, s)
 end
 
 function S.mo_on()
-  return params:get("morph_auto") == 2
+  return pv("morph_auto") == 2
 end
 
 function S.mo_synced()
-  return params:get("morph_sync") == 2
+  return pv("morph_sync") == 2
 end
 
 function S.mo_fmt()
-  local t = div_beats(params:get("morph_div")) * beat_sec()
+  local t = div_beats(pv("morph_div")) * beat_sec()
   local unit = (t < 60) and string.format("%.1f s", t)
                          or string.format("%.1f min", t / 60)
-  return div_label(params:get("morph_div")) .. "  " .. unit
+  return div_label(pv("morph_div")) .. "  " .. unit
 end
 
 local function mo_arm()
-  mo.v = min(max(params:get("morph") * 0.01, EDGE), 1 - EDGE)
+  mo.v = min(max(pv("morph") * 0.01, EDGE), 1 - EDGE)
   mo.sent = nil
   mo.catch = CATCH_DUR
   wa[0], wb[0], wkk[0] = mo.v, mo.v, nil
@@ -196,7 +207,7 @@ local function mo_arm()
 end
 
 local function mo_depth()
-  local d = params:get("morph_depth") * 0.01
+  local d = pv("morph_depth") * 0.01
   if d < 0 then return 0 elseif d > 1 then return 1 end
   return d
 end
@@ -208,15 +219,15 @@ local function mo_tick(dt)
     if on then mo_arm() else return end
   end
   if not on then return end
-  mo_seed = params:get("morph_seed")
+  mo_seed = pv("morph_seed")
 
   local k, ph
   if S.mo_synced() then
-    local b = beats_now() / div_beats(params:get("morph_div"))
+    local b = beats_now() / div_beats(pv("morph_div"))
     k = floor(b)
     ph = b - k
   else
-    local len = params:get("morph_rate")
+    local len = pv("morph_rate")
     if len < 0.05 then len = 0.05 end
     mo.fp = mo.fp + dt / len
     while mo.fp >= 1 do
@@ -226,12 +237,12 @@ local function mo_tick(dt)
     k, ph = mo.k, mo.fp
   end
 
-  local u = mo_shape(params:get("morph_shape"), k, ph, mo_seed, 0)
+  local u = mo_shape(pv("morph_shape"), k, ph, mo_seed, 0)
 
   local x = u * mo_depth()
   local tgt = min(max(EDGE + x * (1 - 2 * EDGE), 0), 1)
 
-  local tau = params:get("morph_slew")
+  local tau = pv("morph_slew")
   if mo.catch > 0 then
     mo.catch = mo.catch - dt
     if abs(tgt - mo.v) < 0.01 then mo.catch = 0 end
@@ -298,8 +309,8 @@ local function vnorm()
 end
 
 local function vrate()
-  vsync = params:get("vlfo_sync") == 2
-  vbeats = div_beats(params:get("vlfo_div"))
+  vsync = pv("vlfo_sync") == 2
+  vbeats = div_beats(pv("vlfo_div"))
   local f = vfreq
   if vsync then
     local t = vbeats * beat_sec()
@@ -313,10 +324,10 @@ end
 function S.vsynced() return vsync end
 
 function S.vfmt()
-  local t = div_beats(params:get("vlfo_div")) * beat_sec()
+  local t = div_beats(pv("vlfo_div")) * beat_sec()
   local unit = (t < 60) and string.format("%.2f s", t)
                         or string.format("%.1f min", t / 60)
-  return div_label(params:get("vlfo_div")) .. "  " .. unit
+  return div_label(pv("vlfo_div")) .. "  " .. unit
 end
 
 function S.vset(sh, f, d)
@@ -406,7 +417,7 @@ local DEPTH_STEP = 2
 function S.mo_depth_delta(d)
   if d == 0 then return nil end
   local on = S.mo_on()
-  local cur = on and params:get("morph_depth") or 0
+  local cur = on and pv("morph_depth") or 0
   local want = min(max(cur + d * DEPTH_STEP, 0), 100)
   if want <= 0 then
     if not on then return "depth: off" end
@@ -423,10 +434,10 @@ function S.mo_freq_delta(d)
   if d == 0 then return nil end
   if S.mo_synced() then
     params:delta("morph_div", -d)
-    return "rate: " .. div_label(params:get("morph_div"))
+    return "rate: " .. div_label(pv("morph_div"))
   end
   params:delta("morph_rate", -d)
-  local t = params:get("morph_rate")
+  local t = pv("morph_rate")
   return "rate: " .. ((t < 10) and string.format("%.2f s", t)
                               or string.format("%d s", floor(t + 0.5)))
 end

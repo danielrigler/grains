@@ -92,21 +92,23 @@ local fx = {
   vlfo_sync     = 1
 }
 
-local watched, nwatched = {}, 0
+local watched, wobj, nwatched = {}, {}, 0
 
 local function poll()
   for i = 1, nwatched do
-    local id = watched[i]
-    fx[id] = params:get(id)
+    fx[watched[i]] = wobj[i]:get()
   end
 end
 
 function font.init()
   local n = 0
   for id in pairs(fx) do
-    if params.lookup[id] then n = n + 1 watched[n] = id end
+    if params.lookup[id] then
+      n = n + 1
+      watched[n], wobj[n] = id, params:lookup_param(id)
+    end
   end
-  for k = n + 1, nwatched do watched[k] = nil end
+  for k = n + 1, nwatched do watched[k], wobj[k] = nil, nil end
   nwatched = n
   poll()
 end

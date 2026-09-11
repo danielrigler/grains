@@ -33,6 +33,7 @@ local FAINT_LEVEL = 3
 local OVERLAP_STEP = 2
 local END_LVL = 13
 local CAP_HALF_MAX = 2
+local LOCK_ARM = 3
 local LMAX = 16
 
 local function ramp(nl, lo, hi, base)
@@ -298,6 +299,8 @@ local function draw_cell(v)
   local is_sel = s_sel == v
   local frz_v = s_frz and s_frz[v]
   local lck = s_lck and s_lck[v]
+  local ytop, ybot = y0 + WALL_TOP, y0 + WALL_BOT
+  local wall_level = is_sel and WALL or 7
   local lvn = nl > 0 and nl or 1
   if NCELL <= FULL_CELLS then
     LVL = LVLS_FULL[lvn]
@@ -311,7 +314,7 @@ local function draw_cell(v)
     local w = xfw[v]
     if w then draw_slide(w, x, y0, ym, xfx[v], xfy[v], nl) end
   else
-    draw_wave(wf, x, ym, 0, CW - 1, y0 + WALL_TOP, y0 + WALL_BOT, 0)
+    draw_wave(wf, x, ym, 0, CW - 1, ytop, ybot, 0)
     if live and nl > 0 then
       local pos = s_pos[v]
       local rd = rails(nl)
@@ -347,11 +350,22 @@ local function draw_cell(v)
     end
   end
 
+  if lck then
+    local cx0, cx1 = x, x + CW - 1
+    local xa, ya = cx1 - LOCK_ARM + 1, ybot - LOCK_ARM + 1
+    R(wall_level, cx0, ytop, LOCK_ARM, 1)
+    R(wall_level, xa, ytop, LOCK_ARM, 1)
+    R(wall_level, cx0, ybot, LOCK_ARM, 1)
+    R(wall_level, xa, ybot, LOCK_ARM, 1)
+    R(wall_level, cx0, ytop, 1, LOCK_ARM)
+    R(wall_level, cx1, ytop, 1, LOCK_ARM)
+    R(wall_level, cx0, ya, 1, LOCK_ARM)
+    R(wall_level, cx1, ya, 1, LOCK_ARM)
+  end
+
   if live and is_loaded then
     local w0, w1 = wall_cols(v)
     local xw0, xw1 = x + w0, x + w1
-    local ytop, ybot = y0 + WALL_TOP, y0 + WALL_BOT
-    local wall_level = is_sel and WALL or 7
     local lvl_hi = is_sel and WALL or 9
 
     for yy = ytop, ybot, 2 do
@@ -359,32 +373,9 @@ local function draw_cell(v)
       R(wall_level, xw1, yy, 1, 1)
     end
 
-    if frz_v and s_blink then
-      R(wall_level, xw0, ytop, 2, 1)
-      R(wall_level, xw0, ybot, 2, 1)
-      R(wall_level, xw1 - 1, ytop, 2, 1)
-      R(wall_level, xw1 - 1, ybot, 2, 1)
-    end
-
-    if lck then
-      local span = w1 - w0
-      local hl = span < 5 and (floor(span / 2) + 1) or 3
-      local vl = ybot - ytop
-      vl = vl < 5 and (floor(vl / 2) + 1) or 3
-      local xhl = xw1 - hl + 1
-      R(wall_level, xw0, ytop, hl, 1)
-      R(wall_level, xhl, ytop, hl, 1)
-      R(wall_level, xw0, ybot, hl, 1)
-      R(wall_level, xhl, ybot, hl, 1)
-      R(wall_level, xw0, ytop, 1, vl)
-      R(wall_level, xw1, ytop, 1, vl)
-      R(wall_level, xw0, ybot - vl + 1, 1, vl)
-      R(wall_level, xw1, ybot - vl + 1, 1, vl)
-    end
-
     local hvol = floor((s_volf[v] or 0) * WALL_ROWS + 0.5)
     if hvol > 0 then
-      R(lvl_hi, xw0, y0 + WALL_BOT - hvol + 1, 1, hvol)
+      R(lvl_hi, xw0, ybot - hvol + 1, 1, hvol)
     end
 
     local ycenter = y0 + PITCH_CENTER_DY
@@ -401,13 +392,17 @@ local function draw_cell(v)
   end
 end
 
-function M.draw(S)
-  s_level, s_rect, s_fill = screen.level, screen.rect, screen.fill
+function M.bind(S)
   xfp, xfw, xfx, xfy = S.xfp, S.xfw, S.xfx, S.xfy
   s_wf, s_on, s_loaded, s_nl = S.wf, S.on, S.loaded, S.nl
   s_ls, s_le, s_pos = S.ls, S.le, S.pos
   s_b0, s_b1, s_volf, s_pitchf = S.b0, S.b1, S.volf, S.pitchf
-  s_frz, s_lck, s_sel, s_blink = S.frz, S.lck, S.sel, S.blink
+  s_frz, s_lck = S.frz, S.lck
+  s_level, s_rect, s_fill = screen.level, screen.rect, screen.fill
+end
+
+function M.draw(sel, blink)
+  s_sel, s_blink = sel, blink
   lastlevel = -1
   pending = false
   for v = 1, NCELL do draw_cell(v) end
@@ -419,7 +414,6 @@ local BAR_Y = 62
 local function P(l, x, y) R(l, x, y, 1, 1) end
 
 function M.icons(drawfn)
-  s_level, s_rect, s_fill = screen.level, screen.rect, screen.fill
   lastlevel = -1
   pending = false
   drawfn(P)

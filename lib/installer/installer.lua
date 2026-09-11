@@ -186,10 +186,13 @@ function Installer:do_restart()
   os.execute(RESTART_CMD)
 end
 
+local PENDING_STATES = {
+  update = true, installing = true, reloading = true,
+  restart = true, restarting = true, error = true
+}
+
 function Installer:pending()
-  local s = self.update.state
-  return s == "update" or s == "installing" or s == "reloading"
-      or s == "restart" or s == "restarting" or s == "error"
+  return PENDING_STATES[self.update.state] == true
 end
 
 function Installer:key(k, z)
