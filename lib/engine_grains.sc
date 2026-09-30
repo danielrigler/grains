@@ -477,6 +477,7 @@ Engine_grains : CroneEngine {
     }
 
     alloc {
+        var t9dub = { arg x, f, amt, k1, k2; var d = x - OnePole.ar(x, 1 - f), h = (Delay1.ar(d) * (k2 / k1) + d).clip2(1 / k1), m = h.abs; x + (h * OnePole.ar(m / log(m * (255 * k1) + 1).max(1e-9), 1 - f) * (amt * (2.40823997 * k1 * k1))) };
         nornsAddr = NetAddr("127.0.0.1", 10111);
 
         inL = -1;
@@ -610,10 +611,25 @@ Engine_grains : CroneEngine {
         }).add;
 
         SynthDef(\grainstape, {
-                arg bus, mix = 0.0;
-                var orig = In.ar(bus, 2);
-                var wet = AnalogTape.ar(orig, 0.9, 0.9, 0.9, 0, 0);
-                ReplaceOut.ar(bus, XFade2.ar(orig, wet, mix * 2 - 1));
+            arg bus;
+            var os = SampleRate.ir / 44100, sh = 0.596, fd = 0.6.pow(6) * 0.0011338, fhz = 0.4.cubed * 140.37, ob = 0.865.cubed * 44100, d, hs, x2, hb, lk;
+            var sig = t9dub.(In.ar(bus, 2) * 2.25 + WhiteNoise.ar(1e-18), (1 - sh) / os, 1.2, 2.848, 1.152);
+            sig = DelayC.ar(sig, 0.003, SinOsc.kr(fhz * LFNoise1.kr(fhz * 0.5 ! 2).range(0.24, 0.98), pi, fd, fd));
+            sig = Slew.ar(sig, ob, ob);
+            d = Delay1.ar(sig) - sig;
+            hs = ((Delay1.ar(d * 0.5 + sig) - sig).abs * 0.12).min(1);
+            hs = hs * (hs * -0.5 + 1);
+            sig = (d * hs + sig).clip2(2.305929);
+            x2 = sig.squared;
+            sig = sig * (x2 * (x2 * (x2 * (x2 * (x2 * -0.000000100208 + 0.00000444473) - 0.0003952447) + 0.014492754) - 0.16666667) + 1);
+            sig = (Delay1.ar(sig) - sig) * hs + sig;
+            lk = (OnePole.ar(LocalIn.ar(2).squared, 0.998) * (0.0927 / os)).clip(1e-6, 0.9);
+            hb = OnePole.ar(sig * (0.066 / os) * (1 - lk) / lk, 1 - lk);
+            LocalOut.ar(hb);
+            hb = BPF.ar(BPF.ar(hb, 60, 1.618), 56.25, 1.618);
+            sig = t9dub.(hb * 0.33 + sig, sh / os, -0.8, 2.628, 1.372).clip2(0.9085097);
+            x2 = HPZ1.ar(sig).abs;
+            ReplaceOut.ar(bus, sig.clip2(0.94 / (x2.max(Delay1.ar(x2)) * 2.7972026 + 1)));
         }).add;
 
         SynthDef(\grainsshaper, {
@@ -827,7 +843,7 @@ Engine_grains : CroneEngine {
         fxWavefold = Synth.newPaused(\grainswavefold, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
         fxShaper = Synth.newPaused(\grainsshaper, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
         fxGlitch = Synth.newPaused(\grainsglitch, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
-        fxTape = Synth.newPaused(\grainstape, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
+        fxTape = Synth.newPaused(\grainstape, [\bus, busMain.index], context.xg, 'addToTail');
         fxWobble = Synth.newPaused(\grainswobble, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
         fxShimmer = Synth.newPaused(\grainsshimmer, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
         fxDelay = Synth.newPaused(\grainsdelay, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');

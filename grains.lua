@@ -1,7 +1,7 @@
 --
 --
 --
---          grains v0.14
+--          grains v0.15
 --           @dddstudio
 --
 --
@@ -50,7 +50,7 @@
 local MusicUtil = require("musicutil")
 local C = {}
 local Installer = include("grains/lib/installer/installer")
-local installer = Installer:new{requirements = {"AnalogTape"}, zip = "https://github.com/schollz/portedplugins/releases/download/v0.4.6/PortedPlugins-RaspberryPi.zip"}
+local installer = Installer:new{requirements = {}, zip = "https://github.com/schollz/portedplugins/releases/download/v0.4.6/PortedPlugins-RaspberryPi.zip"}
 local boot_screen = not installer:ready()
 local function installer_screen() return boot_screen or installer:pending() end
 engine.name = installer:ready() and "grains" or nil
@@ -2165,7 +2165,7 @@ local function setup_params()
   pct("sh_fb", "Feedback", 20)
 
   params:add_group("grains_tape", "TAPE", 8)
-  params:add_option("tape_mix", "Analog", {"off", "on"}, 1) engopt("tape_mix")
+  params:add_option("tape_mix", "Analog Sim", {"off", "on"}, 1) engopt("tape_mix")
   pct("shaper_mix", "Shaper Drive", 0)
   pct("wobble_mix", "Wobble", 0)
   pct("wobble_amp", "Wow Depth", 20)
