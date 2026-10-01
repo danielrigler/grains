@@ -2164,12 +2164,6 @@ local function setup_params()
   params:add_control("sh_fbdelay", "Delay", controlspec.new(0.01, 0.5, "lin", 0.01, 0.2, "s")) eng("sh_fbdelay")
   pct("sh_fb", "Feedback", 20)
 
-  params:add_group("grains_fuzz", "FUZZ", 4)
-  pct("fuzz_mix", "Mix", 0)
-  pct("fuzz_gain", "Gain", 60)
-  pct("fuzz_octave", "Octave", 50)
-  pct("fuzz_tone", "Tone", 50)
-
   params:add_group("grains_tape", "TAPE", 10)
   params:add_option("tape_mix", "Tape Sim", {"off", "on"}, 1) engopt("tape_mix")
   pct("reel_mix", "Saturation", 0)

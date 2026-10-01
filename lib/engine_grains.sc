@@ -16,7 +16,7 @@ Engine_grains : CroneEngine {
     var curStride, reportSlots, trashIndex, curReportK = -1;
     var busMain, fxMain, fxDelay, fxShimmer, fxTilt, fxDimension;
     var fxEq, fxTape, fxShaper, fxWobble, fxBitcrush, fxWavefold;
-    var fxResonator, fxGlitch, fxHaas, fxRotate, fxRingmod, fxStChorus, fxSpiral, fxGenloss, fxFuzz, fxSub, fxReel, fxOtt, spiralBuffer;
+    var fxResonator, fxGlitch, fxHaas, fxRotate, fxRingmod, fxStChorus, fxSpiral, fxGenloss, fxSub, fxReel, fxOtt, spiralBuffer;
     var voiceBus, vfilt, vfg, vfTok, filtKeys, filtSet, stateMsg;
     var wobbleBuffer, glitchBuffer, bufSine;
     var eqLow = 0, eqMid = 0, eqHigh = 0, glRatio = 0, glMix = 1;
@@ -672,15 +672,6 @@ Engine_grains : CroneEngine {
             ReplaceOut.ar(bus, (w * 1.15 - x) * mix + x);
         }).add;
 
-        SynthDef(\grainsfuzz, {
-            arg bus, mix=0, octave=0.5, gain=0.6, tone=0.5;
-            var x = In.ar(bus, 2), a = csoft.(OnePole.ar(csoft.((x - OnePole.ar(x, 0.987)) * 16 + 0.12) - 0.179136, 0.425) * (gain * 40 + 8));
-            var env = LagUD.ar(a.abs, 0.006904, 0.348), sq = ToggleFF.ar(PulseDivider.ar(Schmidt.ar(OnePole.ar(a, 0.985), -0.02, 0.02), 2)) * 2 - 1;
-            var b = OnePole.ar(csoft.(sq * env * (env > 0.004) * 4), 0.65);
-            var y = (((a - OnePole.ar(a, 0.65245)) * ((tone - 0.5) * 2.2) + a) * (1 - octave) + (b * octave) * 0.06).clip2(1);
-            ReplaceOut.ar(bus, (y - x) * mix + x);
-        }).add;
-
         SynthDef(\grainssub, {
             arg bus, mix=0, detune=0.65;
             var x = In.ar(bus, 2), mono = x.sum * 0.5, off = SinOsc.kr(0.15, 0, detune * 0.0173287);
@@ -915,7 +906,6 @@ Engine_grains : CroneEngine {
         fxWavefold = Synth.newPaused(\grainswavefold, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
         fxRingmod = Synth.newPaused(\grainsringmod, [\bus, busMain.index], context.xg, 'addToTail');
         fxShaper = Synth.newPaused(\grainsshaper, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
-        fxFuzz = Synth.newPaused(\grainsfuzz, [\bus, busMain.index], context.xg, 'addToTail');
         fxGlitch = Synth.newPaused(\grainsglitch, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
         fxTape = Synth.newPaused(\grainstape, [\bus, busMain.index], context.xg, 'addToTail');
         fxReel = Synth.newPaused(\grainsreel, [\bus, busMain.index], context.xg, 'addToTail');
@@ -1012,15 +1002,11 @@ Engine_grains : CroneEngine {
         this.addCommand(\spiral_glide, "f", { arg msg; fxSpiral.set(\glide, msg[1]) });
         this.addCommand(\spiral_span, "f", { arg msg; fxSpiral.set(\span, msg[1]) });
         this.addCommand(\spiral_tone, "f", { arg msg; fxSpiral.set(\tone, msg[1]) });
-        this.addCommand(\fuzz_octave, "f", { arg msg; fxFuzz.set(\octave, msg[1]) });
-        this.addCommand(\fuzz_gain, "f", { arg msg; fxFuzz.set(\gain, msg[1]) });
-        this.addCommand(\fuzz_tone, "f", { arg msg; fxFuzz.set(\tone, msg[1]) });
         this.addCommand(\sub_detune, "f", { arg msg; fxSub.set(\detune, msg[1]) });
         this.addCommand("ringmod_mix", "f", { arg msg; fxRingmod.set(\mix, msg[1]); fxRingmod.run(msg[1] > 0) });
         this.addCommand("stchorus_mix", "f", { arg msg; fxStChorus.set(\mix, msg[1]); fxStChorus.run(msg[1] > 0) });
         this.addCommand("spiral_mix", "f", { arg msg; fxSpiral.set(\mix, msg[1]); fxSpiral.run(msg[1] > 0) });
         this.addCommand("genloss_mix", "f", { arg msg; fxGenloss.set(\mix, msg[1]); fxGenloss.run(msg[1] > 0) });
-        this.addCommand("fuzz_mix", "f", { arg msg; fxFuzz.set(\mix, msg[1]); fxFuzz.run(msg[1] > 0) });
         this.addCommand("sub_mix", "f", { arg msg; fxSub.set(\mix, msg[1]); fxSub.run(msg[1] > 0) });
         this.addCommand("reel_mix", "f", { arg msg; fxReel.set(\mix, msg[1]); fxReel.run(msg[1] > 0) });
         this.addCommand("ott_mix", "f", { arg msg; fxOtt.set(\mix, msg[1]); fxOtt.run(msg[1] > 0) });
@@ -1052,7 +1038,7 @@ Engine_grains : CroneEngine {
         voices.do({ arg row; row.do({ arg x; if(x.notNil, { x.free }) }) });
         [reporter, fxMain, fxDelay, fxShimmer, fxTilt, fxDimension, fxEq, fxTape,
          fxShaper, fxWobble, fxBitcrush, fxWavefold, fxResonator, fxGlitch,
-         fxHaas, fxRotate, fxRingmod, fxStChorus, fxSpiral, fxGenloss, fxFuzz, fxSub, fxReel, fxOtt, vfg, dg].do({ arg x; if(x.notNil, { x.free }); });
+         fxHaas, fxRotate, fxRingmod, fxStChorus, fxSpiral, fxGenloss, fxSub, fxReel, fxOtt, vfg, dg].do({ arg x; if(x.notNil, { x.free }); });
         if(pgv.notNil, { pgv.do({ arg g; if(g.notNil, { g.free }) }) });
         if(pg.notNil, { pg.free });
         buffers.do({ arg b; if(b.notNil and: { b !== silent }, { b.free }) });
