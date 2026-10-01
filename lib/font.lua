@@ -75,6 +75,14 @@ local fx = {
   tape_mix      = 1,
   shaper_mix    = 0,
   wobble_mix    = 0,
+  reel_mix      = 0,
+  genloss_mix   = 0,
+  fuzz_mix      = 0,
+  ringmod_mix   = 0,
+  spiral_mix    = 0,
+  sub_mix       = 0,
+  ott_mix       = 0,
+  stchorus_mix  = 0,
   m_width       = 100,
   dimension_mix = 0,
   haas          = 1,
@@ -156,24 +164,26 @@ local function eq_intensity(c)
 end
 
 local function tape_active(c)
-  return c.tape_mix == 2 or c.shaper_mix > 0 or c.wobble_mix > 0
+  return c.tape_mix == 2 or c.shaper_mix > 0 or c.wobble_mix > 0 or c.reel_mix > 0 or c.genloss_mix > 0
 end
 
 local function tape_intensity(c)
   local v = c.tape_mix == 2 and BINARY_ON or 0
   if c.shaper_mix > v then v = c.shaper_mix end
   if c.wobble_mix > v then v = c.wobble_mix end
+  if c.reel_mix > v then v = c.reel_mix end
+  if c.genloss_mix > v then v = c.genloss_mix end
   return v
 end
 
 local function stereo_active(c)
-  return c.m_width ~= 100 or c.dimension_mix > 0 or c.haas == 2 or c.rspeed > 0
+  return c.m_width ~= 100 or c.dimension_mix > 0 or c.stchorus_mix > 0 or c.haas == 2 or c.rspeed > 0
 end
 
 local function stereo_intensity(c)
   local w = abs(c.m_width - 100) / 100
   local h = c.haas == 2 and (BINARY_ON / 100) or 0
-  return max(w, c.dimension_mix / 100, h, c.rspeed) * 100
+  return max(w, c.dimension_mix / 100, c.stchorus_mix / 100, h, c.rspeed) * 100
 end
 
 local CLOCK_ORDER = {{1, 2}, {2, 3}, {3, 2}, {2, 1}}
@@ -241,6 +251,11 @@ local FX_SPECS = {
   {glyph = "B", show = function(c) return c.bc_mix > 0 end,         val = function(c) return c.bc_mod == 2 and c.bc_mix * _bc_lfo(_draw_now) or c.bc_mix end},
   {glyph = "O", show = function(c) return c.reso_mix > 0 end,       val = function(c) return c.reso_mix end},
   {glyph = "W", show = function(c) return c.wf_mix > 0 end,         val = function(c) return c.wf_mix end},
+  {glyph = "M", show = function(c) return c.ringmod_mix > 0 end,   val = function(c) return c.ringmod_mix end},
+  {glyph = "V", show = function(c) return c.fuzz_mix > 0 end,      val = function(c) return c.fuzz_mix end},
+  {glyph = "U", show = function(c) return c.sub_mix > 0 end,       val = function(c) return c.sub_mix end},
+  {glyph = "C", show = function(c) return c.ott_mix > 0 end,       val = function(c) return c.ott_mix end},
+  {glyph = "S", show = function(c) return c.spiral_mix > 0 end,    val = function(c) return c.spiral_mix end},
   {glyph = "G", show = function(c) return c.gl_ratio > 0 and c.gl_mix > 0 end, val = function(c) return c.gl_ratio end},
   {glyph = "T", show = tape_active,                                val = tape_intensity},
   {glyph = "X", show = function(c) return c.sh_mix > 0 end,        val = function(c) return c.sh_mod == 2 and c.sh_mix * _sh_lfo(_draw_now) or c.sh_mix end},

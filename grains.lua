@@ -2164,8 +2164,15 @@ local function setup_params()
   params:add_control("sh_fbdelay", "Delay", controlspec.new(0.01, 0.5, "lin", 0.01, 0.2, "s")) eng("sh_fbdelay")
   pct("sh_fb", "Feedback", 20)
 
-  params:add_group("grains_tape", "TAPE", 8)
-  params:add_option("tape_mix", "Analog Sim", {"off", "on"}, 1) engopt("tape_mix")
+  params:add_group("grains_fuzz", "FUZZ", 4)
+  pct("fuzz_mix", "Mix", 0)
+  pct("fuzz_gain", "Gain", 60)
+  pct("fuzz_octave", "Octave", 50)
+  pct("fuzz_tone", "Tone", 50)
+
+  params:add_group("grains_tape", "TAPE", 10)
+  params:add_option("tape_mix", "Tape Sim", {"off", "on"}, 1) engopt("tape_mix")
+  pct("reel_mix", "Saturation", 0)
   pct("shaper_mix", "Shaper Drive", 0)
   pct("wobble_mix", "Wobble", 0)
   pct("wobble_amp", "Wow Depth", 20)
@@ -2173,10 +2180,12 @@ local function setup_params()
   pct("flutter_amp", "Flutter Depth", 35)
   params:add_control("flutter_freq", "Flutter Speed", controlspec.new(3, 30, "lin", 0.01, 6, "Hz")) eng("flutter_freq")
   params:add_control("flutter_var", "Flutter Var", controlspec.new(0.1, 10, "lin", 0.01, 2, "Hz")) eng("flutter_var")
+  pct("genloss_mix", "More Tape", 0)
 
-  params:add_group("grains_dimension", "STEREO", 4)
+  params:add_group("grains_dimension", "STEREO", 5)
   params:add_control("m_width", "Width", controlspec.new(0, 200, "lin", 1, 100, "%")) eng("m_width", 0.01)
   pct("dimension_mix", "Dimension", 0)
+  pct("stchorus_mix", "Stereo Chorus", 0)
   params:add_option("haas", "Haas Effect", {"off", "on"}, 1) engopt("haas")
   params:add_taper("rspeed", "Rotation", 0, 1, 0, 1, "Hz") eng("rspeed")
 
@@ -2213,6 +2222,28 @@ local function setup_params()
   params:add_control("reso_decay", "Decay", controlspec.new(0.01, 5, "exp", 0, 2, "s")) eng("reso_decay")
   params:add_number("reso_root", "Root", 24, 128, 48, function(p) return MusicUtil.note_num_to_name(p:get(), true) end) params:set_action("reso_root", function() Reso.update() end)
   params:add_option("reso_voicing", "Voicing", Reso.NAMES, 2) params:set_action("reso_voicing", function(v) Reso.voicing(v) Reso.update() end)
+
+  params:add_group("grains_ringmod", "RINGMOD", 3)
+  pct("ringmod_mix", "Mix", 0)
+  params:add_control("ringmod_rate", "Freq", controlspec.new(0.1, 4000, "exp", 0, 800, "Hz")) eng("ringmod_rate")
+  pct("ringmod_sweep", "Sweep", 30)
+
+  params:add_group("grains_spiral", "SPIRAL", 7)
+  pct("spiral_mix", "Mix", 0)
+  params:add_option("spiral_div", "Division", {"1/32", "1/16T", "1/16", "1/8T", "1/8", "1/8.", "1/4", "1/4."}, 5) params:set_action("spiral_div", function(v) engine.spiral_bpm(clock.get_tempo()) engine.spiral_div(({0.125, 1/6, 0.25, 1/3, 0.5, 0.75, 1, 1.5})[v]) end)
+  pct("spiral_feedback", "Feedback", 50)
+  params:add_control("spiral_rise", "Rise", controlspec.new(-100, 100, "lin", 1, 50, "%")) params:set_action("spiral_rise", function(v) engine.spiral_rise((v * 0.01 + 1) * 0.5) end)
+  pct("spiral_glide", "Glide", 0)
+  pct("spiral_span", "Span", 50)
+  pct("spiral_tone", "Tone", 50)
+  clock.tempo_change_handler = function(bpm) engine.spiral_bpm(bpm) end
+
+  params:add_group("grains_sub", "SUB", 2)
+  pct("sub_mix", "Mix", 0)
+  pct("sub_detune", "Detune", 65)
+
+  params:add_group("grains_ott", "MULTIBAND", 1)
+  pct("ott_mix", "Comp", 0)
 
   params:add_group("grains_glitch", "GLITCH", 8)
   pct("gl_ratio", "Glitch", 0)
@@ -2778,6 +2809,7 @@ end
 
 function cleanup()
   if ui_metro then ui_metro:stop() end
+  clock.tempo_change_handler = nil
   if C.initial_rev_send then params:set("rev_eng_input", C.initial_rev_send) end
   if C.initial_reverb then params:set("reverb", C.initial_reverb) end
   if C.initial_monitor_level then params:set('monitor_level', C.initial_monitor_level) end
