@@ -20,7 +20,7 @@ Engine_grains : CroneEngine {
     var voiceBus, vfilt, vfg, vfTok, filtKeys, filtSet, stateMsg;
     var wobbleBuffer, glitchBuffer, bufSine;
     var eqLow = 0, eqMid = 0, eqHigh = 0, glRatio = 0, glMix = 1;
-    var vparams, gparams, nls, actives, wins, loadTok, loadDone;
+    var vparams, gparams, nls, actives, wins, loadTok, loadDone, loadReq, loadBusy;
     var recBuf, recSyn, recPath, recNorm = 0, recBegan, recOn = false, oRec, inL = 0, inR = 1;
 
     *new { arg context, doneCallback; ^super.new(context, doneCallback); }
@@ -364,78 +364,47 @@ Engine_grains : CroneEngine {
     }
 
     readChunk { arg i, path, chunkDur = 12, randomStart = 1, startSec = 0;
-        var token;
+        path = path.asString;
         if(File.exists(path).not, { ^this.readFailed(i) });
         loadTok[i] = loadTok[i] + 1;
-        token = loadTok[i];
+        loadReq[i] = [path, chunkDur, randomStart, startSec, loadTok[i]];
+        if(loadBusy[i].not, { this.loadLoop(i) });
+    }
+
+    loadLoop { arg i;
+        loadBusy[i] = true;
         fork {
-            var sf = SoundFile.openRead(path.asString);
-            var frames, sr, start, num;
-            if(sf.isNil, { this.readFailed(i, token) }, {
-                frames = sf.numFrames;
-                sr = sf.sampleRate;
-                sf.close;
-                if((frames > minFrames) and: { sr > 0 }, {
-                    num = min(frames, (chunkDur * sr).asInteger).max(minFrames);
-                    num = min(num, frames);
-                    start = if((randomStart > 0) and: { frames > num }, {
-                        (frames - num).rand
-                    }, {
-                        (startSec * sr).asInteger.clip(0, max(frames - num, 0))
-                    });
-                    Buffer.readChannel(context.server, path, start, num, [0], { |b|
-                        var old;
-                        if(b.isNil or: { token != loadTok[i] }, {
-                            if(b.isNil, { this.readFailed(i, token) }, { b.free });
-                        }, {
-                            old = buffers[i];
-                            buffers[i] = b;
-                            loadDone[i] = token;
-                            this.startVoice(i);
-                            if(old.notNil and: { old !== silent }, {
-                                fork { 2.5.wait; old.free };
-                            });
-                        });
-                    });
-                    this.sendWaveform(i, path, start, num, token);
-                    fork { 4.0.wait;
-                        if((token == loadTok[i]) and: { loadDone[i] != token },
-                           { this.readFailed(i, token) });
-                    };
-                }, {
-                    this.readFailed(i, token);
-                });
+            while({ loadReq[i].notNil }, {
+                var r = loadReq[i];
+                loadReq[i] = nil;
+                { this.loadChunk(i, *r) }.try({ arg e; e.reportError; this.readFailed(i, r[4]) });
             });
+            loadBusy[i] = false;
         };
     }
 
-    sendWaveform { arg i, path, start, num, token;
-        fork {
-            if(token == loadTok[i], {
-                var sf = SoundFile.openRead(path.asString);
-                if(sf.isNil, { this.readFailed(i, token) }, {
-                    var ch = max(sf.numChannels, 1);
-                    var sr = max(sf.sampleRate, 1);
-                    var block = min(1024, max(1, num div: wfCols));
-                    var peaks = Array.fill(wfCols, { arg c;
-                        var raw = FloatArray.newClear(block * ch);
-                        var mx = 0, n;
-                        sf.seek(start + (num * c div: wfCols), 0);
-                        sf.readData(raw);
-                        n = raw.size div: ch;
-                        n.do({ arg k;
-                            var v = raw[k * ch].abs;
-                            if(v > mx, { mx = v });
-                        });
-                        mx
-                    });
-                    sf.close;
-                    if(token == loadTok[i], {
-                        nornsAddr.sendMsg(*(["/grains/waveform", i] ++ peaks ++ [start / sr]));
-                    });
-                });
-            });
-        };
+    loadChunk { arg i, path, chunkDur, randomStart, startSec, token;
+        var s = context.server, sf, frames, sr, ch, num, start, b, peaks, blk, old;
+        if(token != loadTok[i], { ^this });
+        sf = SoundFile.openRead(path);
+        if(sf.isNil, { ^this.readFailed(i, token) });
+        frames = sf.numFrames; sr = sf.sampleRate; ch = sf.numChannels.max(1);
+        if((frames <= minFrames) or: { sr <= 0 }, { sf.close; ^this.readFailed(i, token) });
+        num = min(frames, (chunkDur * sr).asInteger).max(minFrames).min(frames).min(16777216);
+        start = if((randomStart > 0) and: { frames > num }, { (frames - num).rand }, { (startSec * sr).asInteger.clip(0, max(frames - num, 0)) });
+        b = Buffer.readChannel(s, path, start, num, [0]);
+        blk = Signal.newClear(min(4096, max(1, num div: wfCols)) * ch);
+        peaks = Array.fill(wfCols, { arg c; sf.seek(start + (c / wfCols * num).asInteger, 0); sf.readData(blk); if(c % 16 == 15, { 0.wait }); blk.peak });
+        sf.close;
+        s.sync;
+        if(token != loadTok[i], { ^b.free });
+        if(b.numFrames.isNil, { b.free; ^this.readFailed(i, token) });
+        old = buffers[i];
+        buffers[i] = b;
+        loadDone[i] = token;
+        this.startVoice(i);
+        if(old.notNil and: { old !== silent }, { fork { 2.5.wait; old.free } });
+        nornsAddr.sendMsg(*(["/grains/waveform", i] ++ peaks ++ [start / sr]));
     }
 
     moveVoice { arg src, dst;
@@ -511,6 +480,8 @@ Engine_grains : CroneEngine {
         wins = Array.fill(nv * nlMax * 2, { arg k; (k % 2) });
         loadTok = Array.fill(nv, { 0 });
         loadDone = Array.fill(nv, { -1 });
+        loadReq = Array.fill(nv, { nil });
+        loadBusy = Array.fill(nv, { false });
 
         stateBus = Bus.control(context.server, (nv * nlMax) + 1);
         trashIndex = stateBus.index + (nv * nlMax);
@@ -528,7 +499,7 @@ Engine_grains : CroneEngine {
         context.server.sync;
 
         SynthDef(\grainsloop, {
-            arg bus, buf, statebus = 0, posStart = 0, posEnd = 1, mrate = 1, prate = 1, gate = 1, rel = 1, rateSlew = 1.5, vrate = 1, weight1 = 14, weight2 = 8, weight3 = 3, weight4 = 6, weight5 = 4, lrate1 = 1, lrate2 = 0.5, lrate3 = 4, lrate4 = 2, lrate5 = 0.25, lamp1 = 1, lamp2 = 1.5849, lamp3 = 0.1259, lamp4 = 0.3981, lamp5 = 1.2589, revprob = 0.5, panwidth = 0.5, ampfloor = 0.25, kTune = 3, kDir = 6, kAmp = 4.5, kPan = 8, phAmp = 0, phPan = 0, lagAmp = 0.4;
+            arg bus, buf, statebus = 0, posStart = 0, posEnd = 1, mrate = 1, prate = 1, gate = 1, rel = 1, rateSlew = 1.5, vrate = 1, weight1 = 14, weight2 = 8, weight3 = 3, weight4 = 6, weight5 = 4, lrate1 = 1, lrate2 = 0.5, lrate3 = 4, lrate4 = 2, lrate5 = 0.25, lamp1 = 1, lamp2 = 1.5849, lamp3 = 0.1259, lamp4 = 0.3981, lamp5 = 1.2589, revprob = 0.1, panwidth = 0.5, ampfloor = 0.25, kTune = 3, kDir = 6, kAmp = 4.5, kPan = 8, phAmp = 0, phPan = 0, lagAmp = 0.4;
 
             var frames, idx, tuneTrig;
             var lfoRate, lfoAmp2, lfoForward, lfoAmp, lfoPan, rate, rateSign;

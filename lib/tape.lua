@@ -1,43 +1,23 @@
 local T = {}
 
-local EXT = {wav = true, aif = true, aiff = true, flac = true, ogg = true}
+local LIST = "/tmp/grains_files.txt"
 
-function T.scan(root, max_files, max_depth)
+local function q(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
+
+function T.scan(root, max_files, max_depth, done)
   max_files = max_files or 1500
   max_depth = max_depth or 4
-  if root == nil or root == "" then return {}, false, false end
+  if root == nil or root == "" then return done({}, false, false) end
   if root:sub(-1) ~= "/" then root = root .. "/" end
-  local out, nout = {}, 0
-  local deepened = false
-  local stack, ns = {{dir = root, d = 0}}, 1
-  while ns > 0 and nout < max_files do
-    local top = stack[ns]
-    stack[ns] = nil
-    ns = ns - 1
-    local ok, entries = pcall(util.scandir, top.dir)
-    if ok and entries then
-      for _, e in ipairs(entries) do
-        if e:sub(-1) == "/" then
-          if e:sub(1, 1) ~= "." then
-            if top.d < max_depth then
-              ns = ns + 1
-              stack[ns] = {dir = top.dir .. e, d = top.d + 1}
-            else
-              deepened = true
-            end
-          end
-        elseif e:sub(1, 1) ~= "." then
-          local ext = e:match("%.([%a]+)$")
-          if ext and EXT[ext:lower()] then
-            nout = nout + 1
-            out[nout] = top.dir .. e
-            if nout >= max_files then break end
-          end
-        end
-      end
-    end
-  end
-  return out, nout >= max_files, deepened
+  local d = q(root)
+  local cmd = "nice -n 10 find " .. d .. " -mindepth 1 -maxdepth " .. (max_depth + 1)
+    .. " -name '.*' -prune -o -type f \\( -iname '*.wav' -o -iname '*.aif' -o -iname '*.aiff' -o -iname '*.flac' -o -iname '*.ogg' \\) -print 2>/dev/null | head -n " .. max_files .. " > " .. LIST
+    .. "; find " .. d .. " -mindepth " .. (max_depth + 1) .. " -maxdepth " .. (max_depth + 1) .. " -type d -not -path '*/.*' -print -quit 2>/dev/null | wc -l; echo _done_"
+  norns.system_cmd(cmd, function(out)
+    local list, n, f = {}, 0, io.open(LIST, "r")
+    if f then for line in f:lines() do n = n + 1 list[n] = line end f:close() end
+    done(list, n >= max_files, (tonumber((out or ""):match("^%s*(%d+)")) or 0) > 0)
+  end)
 end
 
 function T.pick(list, n)

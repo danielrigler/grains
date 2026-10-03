@@ -1701,13 +1701,20 @@ local function retry_voice(i)
   load_voice(i, pool[math.random(#pool)])
 end
 
-local function scan_source()
+local scan_busy, scan_wait = false, nil
+
+local function scan_source(after)
   local dir = params:get("source")
   if dir == nil or dir == "" or dir == "-" then dir = C.AUDIO_DIR end
   if dir:sub(-1) ~= "/" then dir = dir:match("^(.*/)") or C.AUDIO_DIR end
-  if dir ~= scanned_dir then
-    local capped, deepened
-    file_list, capped, deepened = tape.scan(dir, C.SCAN_MAX_FILES, C.SCAN_MAX_DEPTH)
+  if dir == scanned_dir then return #file_list > 0 end
+  if after then scan_wait = after end
+  if scan_busy then return nil end
+  scan_busy = true
+  tape.scan(dir, C.SCAN_MAX_FILES, C.SCAN_MAX_DEPTH, function(list, capped, deepened)
+    scan_busy = false
+    if C.dead then return end
+    file_list = list
     local note = ""
     if capped then
       note = string.format(" (capped at %d -- point SOURCE at a subfolder to reach the rest)",
@@ -1718,14 +1725,17 @@ local function scan_source()
     print(string.format("grains: %d sample%s in %s%s",
       #file_list, #file_list == 1 and "" or "s", dir, note))
     scanned_dir = #file_list > 0 and dir or nil
-  end
-  return #file_list > 0
+    local f = scan_wait
+    scan_wait = nil
+    if f then f(#file_list > 0) end
+  end)
+  return nil
 end
 
 local function load_random_into(slots, scanned)
   local ns = #slots
   if ns < 1 then return end
-  if not (scanned or scan_source()) then return end
+  if not (scanned or scan_source(function(ok) if ok then load_random_into(slots, true) end end)) then return end
   local target = {}
   for _, i in ipairs(slots) do target[i] = true end
   local chosen = tape.pick(fresh_pool(target), ns)
@@ -1774,12 +1784,16 @@ local function load_n(n, keep_vol)
   end
   dirty = true
   redraw()
-  if not scan_source() then
-    for _, i in ipairs(slots) do clear_voice(i) end
-    refresh_layout()
-    return
+  local function go(ok)
+    if not ok then
+      for _, i in ipairs(slots) do clear_voice(i) end
+      refresh_layout()
+      return
+    end
+    load_random_into(slots, true)
   end
-  load_random_into(slots, true)
+  local ok = scan_source(go)
+  if ok ~= nil then go(ok) end
 end
 
 local src = {}
@@ -1822,7 +1836,7 @@ function src.set_count(n)
       if S.files[i] == nil then need = need + 1 end
     end
     if need > 0 then
-      if not scan_source() then
+      if not scan_source(function(ok) if ok then src.set_count(n) end end) then
         layout_busy = false
         return false
       end
@@ -2092,7 +2106,7 @@ local function setup_params()
       end
     end
   end
-  params:add_control("reverse", "Reverse Chance", controlspec.new(0, 100, "lin", 1, 40, "%"))
+  params:add_control("reverse", "Reverse Chance", controlspec.new(0, 100, "lin", 1, 10, "%"))
   params:add_control("rateslew", "Rate Slew", controlspec.new(0.005, 10, "exp", 0, 1.5, "s"))
   params:add_control("panwidth", "Pan Width", controlspec.new(0, 100, "lin", 1, 90, "%"))
   params:add_control("ampfloor", "Level Floor", controlspec.new(0, 100, "lin", 1, 25, "%"))
@@ -2795,13 +2809,16 @@ function init()
     end
   end
   ui_metro:start()
-  clock.run(function()
-    clock.sleep(3)
+  C.check_co = clock.run(function()
+    clock.sleep(10)
+    C.check_co = nil
     installer:check()
   end)
 end
 
 function cleanup()
+  C.dead = true
+  if C.check_co then pcall(clock.cancel, C.check_co) C.check_co = nil end
   if ui_metro then ui_metro:stop() end
   clock.tempo_change_handler = nil
   if C.initial_rev_send then params:set("rev_eng_input", C.initial_rev_send) end
