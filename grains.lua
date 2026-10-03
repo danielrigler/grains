@@ -2,7 +2,7 @@
 --
 --
 --          grains v0.15
---           @dddstudio 
+--           @dddstudio
 --
 --
 --
@@ -2190,12 +2190,16 @@ local function setup_params()
   params:add_control("flutter_var", "Flutter Var", controlspec.new(0.1, 10, "lin", 0.01, 2, "Hz")) eng("flutter_var")
   pct("genloss_mix", "More Tape", 0)
 
-  params:add_group("grains_dimension", "STEREO", 5)
+  params:add_group("grains_dimension", "STEREO", 3)
   params:add_control("m_width", "Width", controlspec.new(0, 200, "lin", 1, 100, "%")) eng("m_width", 0.01)
-  pct("dimension_mix", "Dimension", 0)
-  pct("stchorus_mix", "Stereo Chorus", 0)
   params:add_option("haas", "Haas Effect", {"off", "on"}, 1) engopt("haas")
   params:add_taper("rspeed", "Rotation", 0, 1, 0, 1, "Hz") eng("rspeed")
+
+  params:add_group("grains_chorus", "CHORUS", 4)
+  pct("dimension_mix", "Dimension", 0)
+  pct("stchorus_mix", "Stereo Chorus", 0)
+  pct("vibe_mix", "Vibe", 0)
+  pct("vibe_drift", "Vibe Drift", 50)
 
   params:add_group("grains_eq", "EQ", 4)
   params:add_control("eq_low", "Bass", controlspec.new(-20, 20, "lin", 0.5, 0, "dB")) eng("eq_low")

@@ -5,6 +5,7 @@ local micro_font = {
   B = {{1,1,0},{0,1,1},{0,0,1}},
   L = {{1,0},{1,0},{1,1}},
   C = {{1,1,1},{1,0,0},{1,1,1}},
+  c = {{1,1},{1,0},{1,1}},
   G = {{1,1,0},{1,0,1},{1,1,1}},
   E = {{1,1,1},{1,1,0},{1,1,1}},
   I = {{1},{1},{1}},
@@ -84,6 +85,7 @@ local fx = {
   stchorus_mix  = 0,
   m_width       = 100,
   dimension_mix = 0,
+  vibe_mix      = 0,
   haas          = 1,
   rspeed        = 0,
   eq_low        = 0,
@@ -176,13 +178,13 @@ local function tape_intensity(c)
 end
 
 local function stereo_active(c)
-  return c.m_width ~= 100 or c.dimension_mix > 0 or c.stchorus_mix > 0 or c.haas == 2 or c.rspeed > 0
+  return c.m_width ~= 100 or c.haas == 2 or c.rspeed > 0
 end
 
 local function stereo_intensity(c)
   local w = abs(c.m_width - 100) / 100
   local h = c.haas == 2 and (BINARY_ON / 100) or 0
-  return max(w, c.dimension_mix / 100, c.stchorus_mix / 100, h, c.rspeed) * 100
+  return max(w, h, c.rspeed) * 100
 end
 
 local CLOCK_ORDER = {{1, 2}, {2, 3}, {3, 2}, {2, 1}}
@@ -252,14 +254,15 @@ local FX_SPECS = {
   {glyph = "W", show = function(c) return c.wf_mix > 0 end,         val = function(c) return c.wf_mix end},
   {glyph = "M", show = function(c) return c.ringmod_mix > 0 end,   val = function(c) return c.ringmod_mix end},
   {glyph = "U", show = function(c) return c.sub_mix > 0 end,       val = function(c) return c.sub_mix end},
-  {glyph = "C", show = function(c) return c.ott_mix > 0 end,       val = function(c) return c.ott_mix end},
+  {glyph = "c", show = function(c) return c.ott_mix > 0 end,       val = function(c) return c.ott_mix end},
   {glyph = "S", show = function(c) return c.spiral_mix > 0 end,    val = function(c) return c.spiral_mix end},
   {glyph = "G", show = function(c) return c.gl_ratio > 0 and c.gl_mix > 0 end, val = function(c) return c.gl_ratio end},
   {glyph = "T", show = tape_active,                                val = tape_intensity},
   {glyph = "X", show = function(c) return c.sh_mix > 0 end,        val = function(c) return c.sh_mod == 2 and c.sh_mix * _sh_lfo(_draw_now) or c.sh_mix end},
   {glyph = "D", show = function(c) return c.d_mix > 0 end,         val = function(c) return c.d_mix end},
   {glyph = "R", show = function(c) return c.reverb_mix > -40 end,  val = function(c) return util.linlin(-40, 18, 0, 100, c.reverb_mix) end},
-  {glyph = "Z", show = stereo_active,                              val = stereo_intensity}
+  {glyph = "Z", show = stereo_active,                              val = stereo_intensity},
+  {glyph = "C", show = function(c) return c.dimension_mix > 0 or c.stchorus_mix > 0 or c.vibe_mix > 0 end, val = function(c) return max(c.dimension_mix, c.stchorus_mix, c.vibe_mix) end}
 }
 
 local NFX = #FX_SPECS

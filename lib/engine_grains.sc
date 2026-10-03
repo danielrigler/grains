@@ -16,7 +16,7 @@ Engine_grains : CroneEngine {
     var curStride, reportSlots, trashIndex, curReportK = -1;
     var busMain, fxMain, fxDelay, fxShimmer, fxTilt, fxDimension;
     var fxEq, fxTape, fxShaper, fxWobble, fxBitcrush, fxWavefold;
-    var fxResonator, fxGlitch, fxHaas, fxRotate, fxRingmod, fxStChorus, fxSpiral, fxGenloss, fxSub, fxReel, fxOtt, spiralBuffer;
+    var fxResonator, fxGlitch, fxHaas, fxRotate, fxRingmod, fxStChorus, fxVibe, fxSpiral, fxGenloss, fxSub, fxReel, fxOtt, spiralBuffer;
     var voiceBus, vfilt, vfg, vfTok, filtKeys, filtSet, stateMsg;
     var wobbleBuffer, glitchBuffer, bufSine;
     var eqLow = 0, eqMid = 0, eqHigh = 0, glRatio = 0, glMix = 1;
@@ -619,6 +619,14 @@ Engine_grains : CroneEngine {
             ReplaceOut.ar(bus, XFade2.ar(dry, wet, mix * 2 - 1));
         }).add;
 
+        SynthDef(\grainsvibe, {
+            arg bus, drift = 0.5, mix = 0;
+            var x = In.ar(bus, 2), p = Phasor.kr(0, LocalIn.kr(1).max(0.4294967) * drift.cubed * 0.001 * SampleRate.ir * ControlDur.ir, 0, 2pi), ph = (p + 3) % 2pi;
+            var wet = DelayL.ar(x, 260 * SampleDur.ir, (129 - (127 * [sin(ph), cos(ph)])) * SampleDur.ir);
+            LocalOut.kr(TRand.kr(0.4294967, 0.6949, HPZ1.kr(p) < 0));
+            ReplaceOut.ar(bus, x + ((wet - x) * mix));
+        }).add;
+
         SynthDef(\grainsspiral, {
             arg bus, mix=0, bpm=120, div=0.5, feedback=0.5, rise=0.75, glide=0, span=0.5, tone=0.5;
             var x = In.ar(bus, 2), sr = SampleRate.ir, frames = BufFrames.ir(spiralBuffer), soft = csoft;
@@ -888,6 +896,7 @@ Engine_grains : CroneEngine {
         fxDelay = Synth.newPaused(\grainsdelay, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
         fxRotate = Synth.newPaused(\grainsrotate, [\bus, busMain.index, \rspeed, 0], context.xg, 'addToTail');
         fxStChorus = Synth.newPaused(\grainsstchorus, [\bus, busMain.index], context.xg, 'addToTail');
+        fxVibe = Synth.newPaused(\grainsvibe, [\bus, busMain.index], context.xg, 'addToTail');
         fxDimension = Synth.newPaused(\grainsdimension, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
         fxHaas = Synth.newPaused(\grainshaas, [\bus, busMain.index], context.xg, 'addToTail');
         fxOtt = Synth.newPaused(\grainsott, [\bus, busMain.index], context.xg, 'addToTail');
@@ -976,6 +985,8 @@ Engine_grains : CroneEngine {
         this.addCommand(\sub_detune, "f", { arg msg; fxSub.set(\detune, msg[1]) });
         this.addCommand("ringmod_mix", "f", { arg msg; fxRingmod.set(\mix, msg[1]); fxRingmod.run(msg[1] > 0) });
         this.addCommand("stchorus_mix", "f", { arg msg; fxStChorus.set(\mix, msg[1]); fxStChorus.run(msg[1] > 0) });
+        this.addCommand("vibe_mix", "f", { arg msg; fxVibe.set(\mix, msg[1]); fxVibe.run(msg[1] > 0) });
+        this.addCommand("vibe_drift", "f", { arg msg; fxVibe.set(\drift, msg[1]) });
         this.addCommand("spiral_mix", "f", { arg msg; fxSpiral.set(\mix, msg[1]); fxSpiral.run(msg[1] > 0) });
         this.addCommand("genloss_mix", "f", { arg msg; fxGenloss.set(\mix, msg[1]); fxGenloss.run(msg[1] > 0) });
         this.addCommand("sub_mix", "f", { arg msg; fxSub.set(\mix, msg[1]); fxSub.run(msg[1] > 0) });
@@ -1009,7 +1020,7 @@ Engine_grains : CroneEngine {
         voices.do({ arg row; row.do({ arg x; if(x.notNil, { x.free }) }) });
         [reporter, fxMain, fxDelay, fxShimmer, fxTilt, fxDimension, fxEq, fxTape,
          fxShaper, fxWobble, fxBitcrush, fxWavefold, fxResonator, fxGlitch,
-         fxHaas, fxRotate, fxRingmod, fxStChorus, fxSpiral, fxGenloss, fxSub, fxReel, fxOtt, vfg, dg].do({ arg x; if(x.notNil, { x.free }); });
+         fxHaas, fxRotate, fxRingmod, fxStChorus, fxVibe, fxSpiral, fxGenloss, fxSub, fxReel, fxOtt, vfg, dg].do({ arg x; if(x.notNil, { x.free }); });
         if(pgv.notNil, { pgv.do({ arg g; if(g.notNil, { g.free }) }) });
         if(pg.notNil, { pg.free });
         buffers.do({ arg b; if(b.notNil and: { b !== silent }, { b.free }) });
