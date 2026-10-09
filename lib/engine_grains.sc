@@ -503,10 +503,10 @@ Engine_grains : CroneEngine {
 
             var frames, idx, tuneTrig;
             var lfoRate, lfoAmp2, lfoForward, lfoAmp, lfoPan, rate, rateSign;
-            var pStart, pEnd, span, tiny, edge, switch, pos1, pos2, snd1, snd2, posK, resetTo;
+            var pStart, pEnd, span, tiny, edge, use, spd, switch, pos1, pos2, snd1, snd2, posK, resetTo;
             var snd, volume, boot;
             var xfk, xfr, settled, outside, dirNow;
-            var xfTime = 0.03, chkRate = 25;
+            var xfTime, chkRate = 25;
 
             frames = BufFrames.kr(buf).max(4096);
 
@@ -525,9 +525,12 @@ Engine_grains : CroneEngine {
 
             span    = (frames * 0.04).min(2048);
             tiny    = (frames * 0.005).min(256);
-            edge    = ((SampleRate.ir * 0.2).min(frames * 0.06)).max(tiny);
-            pStart  = Clip.kr(posStart * frames, edge, frames - span - edge);
-            pEnd    = Clip.kr(posEnd * frames, pStart + span, frames - edge);
+            edge    = ((SampleRate.ir * 0.2).min(frames * 0.02)).max(tiny);
+            use     = frames - edge - edge;
+            pStart  = Clip.kr(edge + (posStart * use), edge, frames - span - edge);
+            pEnd    = Clip.kr(edge + (posEnd * use), pStart + span, frames - edge);
+            spd     = rate.abs.max(0.05) * SampleRate.ir;
+            xfTime  = (((pEnd - pStart) * 0.25).min(edge * 0.5) / spd).clip(0.003, 0.03);
 
             switch = ToggleFF.kr(LocalIn.kr(1));
 
@@ -556,7 +559,7 @@ Engine_grains : CroneEngine {
 
             snd = Pan2.ar(snd, lfoPan, volume);
 
-            Out.kr(statebus, posK / frames);
+            Out.kr(statebus, ((posK - edge) / use).clip(0, 1));
             Out.ar(bus, snd);
         }).add;
 

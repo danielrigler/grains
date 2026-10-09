@@ -1,12 +1,12 @@
 --
 --
 --
---          grains v0.15
+--          grains v0.16
 --           @dddstudio
 --
 --
 --
--- K1+E1 Density - Start Here
+-- K1+E1 Density
 -- E1 Master Volume
 -- K2/K3 Navigate Voices
 -- E2/E3 Set Boundaries
@@ -37,12 +37,13 @@
 -- K1+K2 hold: Freeze Voice
 -- K1+K3 hold: Freeze All
 --
---
---
---
---
---
---
+-- GRID rows 1-6: voices
+-- press: move section
+-- hold+press: set section
+-- rows 7-8: fx up/down, 13: lfo
+-- 14: reseed/dice, 15: vol
+-- 16: voices, both: reset
+-- hold row +15: vol +16: lock/frz
 --
 -- Based on Graintopia by
 -- @infinitedigits
@@ -66,6 +67,7 @@ local Shuffle = include("grains/lib/shuffle")
 local Reso    = include("grains/lib/reso")
 local Keys    = include("grains/lib/keys")
 local Undo    = include("grains/lib/undo")
+local Grid    = include("grains/lib/gridui")
 local clamp   = include("grains/lib/util").clamp
 local NV = 6
 local NL = 14
@@ -1748,13 +1750,6 @@ local function load_random_into(slots, scanned)
   refresh_layout()
 end
 
-local function load_random(n, scanned)
-  n = clamp(floor(n or (nva < 1 and C.DEFAULT_NV or nva)), 1, NV)
-  local slots = {}
-  for i = 1, n do slots[i] = i end
-  load_random_into(slots, scanned)
-end
-
 local function load_n(n, keep_vol)
   n = clamp(floor(n), 1, NV)
 
@@ -2467,7 +2462,7 @@ function redraw(now)
   if installer_screen() then installer:redraw() return end
   screen.clear()
   matrix.draw(sel, S.blink)
-  if nva < 1 then matrix.notice("no audio loaded", "K1+K2 or load from the MENU") end
+  if nva < 1 then matrix.notice("no audio loaded", "K1+K2 or load from the MENU", "or hold K3 to record input") end
   now = now or util.time()
   local vol_on = volbar.frac and (now - volbar.t) < C.POP_DUR
   if vol_on then
@@ -2476,6 +2471,9 @@ function redraw(now)
     matrix.morphbar(Morph.pos)
   end
   if vol_on or not morph_on then matrix.icons(font.draw) end
+  if nva >= 1 and DENSP and DENSP:get() < 1 and not REC.state and bounce_until <= 0 then
+    matrix.recpopup("no layers", nil, nil, "turn K1+E1 up")
+  end
   if pop.kind and (now - pop.t) < C.POP_DUR then
     if pop.kind == "fx" then
       matrix.fxpopup(pop.txt)
@@ -2748,8 +2746,82 @@ function init()
   push_voice_params()
   push_per_voice()
   push_population()
+  C.LFO_RMAX = params:lookup_param("vlfo_freq").controlspec:unmap(1)
+  Grid.init{
+    S = S,
+    count = function() return nva end,
+    voices = src.nudge_count,
+    pop = function(label, id)
+      pop_show("fx", label .. ": " .. (id == "reverb_mix" and fast_db(params:get(id)) or params:string(id)))
+    end,
+    bounds = function(i, a, w)
+      local p = PID[i]
+      Undo.mark("grid" .. i)
+      w = w and w * 100 or p.widthp:get()
+      a = a * 100
+      if a + w > 100 then a = 100 - w end
+      params:set(p.bstart, a)
+      params:set(p.bwidth, w)
+      sel = i
+      dirty = true
+    end,
+    vol = function(d, tap, v)
+      local i = v or sel
+      if i < 1 then return end
+      local id = PID[i].vol
+      Undo.mark("nudge_vol")
+      if d == 0 then
+        params:set(id, C.VOL_DEFAULT_DB)
+      else
+        Shuffle.vol:nudge(i, d * (tap and 2 or 0.5))
+      end
+      pop_show("fx", "vol " .. i .. ": " .. params:string(id))
+    end,
+    hold = function(i, lock)
+      local id = (lock and "lock_v" or "freeze") .. i
+      toggle_param(id)
+      pop_show("fx", (lock and "lock " or "freeze ") .. i .. (params:get(id) == 1 and ": on" or ": off"))
+    end,
+    lfofrac = function()
+      if params:get("vlfo") ~= 2 then return 0 end
+      local x = params:get("vlfo_sync") == 2
+        and 1 - (params:get("vlfo_div") - 1) / (Sync.NDIV - 1)
+        or params:get_raw("vlfo_freq") / C.LFO_RMAX
+      return 0.1 + 0.9 * (x > 1 and 1 or x)
+    end,
+    lfo = function(d, tap)
+      local on, clk = params:get("vlfo") == 2, params:get("vlfo_sync") == 2
+      if d == 0 then
+        params:set("vlfo", 1)
+      elseif not on then
+        if d < 0 then return end
+        params:set("vlfo", 2)
+      elseif clk then
+        if not tap then return end
+        local v = params:get("vlfo_div") - d
+        if v > Sync.NDIV then
+          params:set("vlfo", 1)
+        elseif v >= 1 and (d < 0 or Sync.div_beats(v) * clock.get_beat_sec() >= 1) then
+          params:set("vlfo_div", v)
+        end
+      else
+        local r, rmax = params:get_raw("vlfo_freq"), C.LFO_RMAX
+        if d < 0 and r <= 0 then
+          params:set("vlfo", 1)
+        elseif d < 0 or r < rmax then
+          params:set_raw("vlfo_freq", clamp(r + d * (tap and 0.05 or 0.02), 0, d > 0 and rmax or 1))
+        end
+      end
+      pop_show("fx", "lfo: " .. (params:get("vlfo") ~= 2 and "off"
+        or params:string(clk and "vlfo_div" or "vlfo_freq")))
+    end,
+    trig = function(top)
+      Undo.mark()
+      if top then reseed_voices() else dice() end
+      pop_show("fx", top and "reseed" or "randomize")
+    end
+  }
   engine.report_rate(C.REPORT_RATE)
-  load_random(C.DEFAULT_NV)
   ui_metro = metro.init()
   ui_metro.time = 1 / C.FPS
   ui_metro.event = function()
@@ -2759,6 +2831,7 @@ function init()
       ctrl_n = 0
       Sync.tick(now)
       physics_tick()
+      Grid.tick(now)
     end
     Keys.tick(now)
     if font.tick(now) then dirty = true end
@@ -2824,6 +2897,7 @@ function cleanup()
   C.dead = true
   if C.check_co then pcall(clock.cancel, C.check_co) C.check_co = nil end
   if ui_metro then ui_metro:stop() end
+  Grid.cleanup()
   clock.tempo_change_handler = nil
   if C.initial_rev_send then params:set("rev_eng_input", C.initial_rev_send) end
   if C.initial_reverb then params:set("reverb", C.initial_reverb) end

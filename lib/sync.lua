@@ -41,6 +41,8 @@ local function div_beats(i)
   return d and d[1] or 1
 end
 
+S.div_beats = div_beats
+
 local function div_label(i)
   local d = DIV[i]
   return d and d[2] or "?"

@@ -442,15 +442,19 @@ function M.morphbar(frac)
   lastlevel = -1
 end
 
-function M.notice(l1, l2)
+function M.notice(l1, l2, l3)
   Rflush()
   screen.level(15)
-  screen.move(64, 28)
+  screen.move(64, 24)
   screen.text_center(l1)
+  screen.level(3)
   if l2 then
-    screen.level(3)
-    screen.move(64, 40)
+    screen.move(64, 36)
     screen.text_center(l2)
+  end
+  if l3 then
+    screen.move(64, 46)
+    screen.text_center(l3)
   end
   lastlevel = -1
 end
