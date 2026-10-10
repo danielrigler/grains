@@ -105,31 +105,6 @@ function S.dly_fmt()
   return div_label(pv("d_div")) .. "  " .. unit
 end
 
-local gl_co = nil
-
-function S.gl_stop()
-  if gl_co then clock.cancel(gl_co) gl_co = nil end
-end
-
-function S.gl_refresh()
-  local on = pv("gl_sync") == 2
-  engine.gl_sync(on and 1 or 0)
-  if not on then return S.gl_stop() end
-  gl_co = gl_co or clock.run(function()
-    while true do
-      clock.sync(div_beats(pv("gl_div")))
-      if pv("gl_ratio") > 0 then engine.gl_trig() end
-    end
-  end)
-end
-
-function S.gl_fmt()
-  local t = div_beats(pv("gl_div")) * beat_sec()
-  local unit = (t < 1) and string.format("%d ms", floor(t * 1000 + 0.5))
-                        or string.format("%.2f s", t)
-  return div_label(pv("gl_div")) .. "  " .. unit
-end
-
 local mo = {
   v = 0, sent = nil, last = nil, catch = 0, was = false,
   fp = 0, k = 0
@@ -494,7 +469,6 @@ function S.vis()
   local m = on and S.mo_synced()
   if d then params:show("d_div") else params:hide("d_div") end
   if d then params:hide("d_time") else params:show("d_time") end
-  if pv("gl_sync") == 2 then params:show("gl_div") else params:hide("gl_div") end
   for _, id in ipairs(MO_CTL) do
     if on then params:show(id) else params:hide(id) end
   end

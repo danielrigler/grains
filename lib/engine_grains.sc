@@ -732,8 +732,8 @@ Engine_grains : CroneEngine {
         }).add;
 
         SynthDef(\grainsglitch, {
-            arg bus, glitch_ratio = 0.0, mix = 1, minLength = 0.075, maxLength = 0.2, reverse = 0, pitch = 0, maxStutters = 5, sync = 0, t_ext = 0;
-            var sig, sr, frames, busy, rest, writePos, idle, cool, trig, t, len, start, ps, dur, gate, rel, pos, fade, env, wet;
+            arg bus, glitch_ratio = 0.0, mix = 1, minLength = 0.075, maxLength = 0.2, reverse = 0, pitch = 0, maxStutters = 5, gate_amt = 1, decay = 0;
+            var sig, sr, frames, busy, rest, writePos, idle, cool, trig, len, start, ps, dur, on, el, t, rel, pos, fade, env, wet;
             sig = In.ar(bus, 2);
             sr = SampleRate.ir;
             frames = BufFrames.ir(glitchBuffer);
@@ -742,21 +742,22 @@ Engine_grains : CroneEngine {
             #busy, rest = LocalIn.kr(2);
             idle = (2 + maxStutters) * (minLength + maxLength) * 0.25 * (1 - glitch_ratio).max(0.01) / glitch_ratio.max(0.0001);
             cool = (idle * 0.5).min(4);
-            trig = Select.kr(sync, [Dust.kr((idle - cool).reciprocal) * (1 - rest), CoinGate.kr(glitch_ratio, t_ext)]) * (1 - busy);
+            trig = Dust.kr((idle - cool).reciprocal) * (1 - rest) * (1 - busy);
             len = TRand.kr(minLength, maxLength, trig) * sr;
             start = (Latch.kr(writePos, trig) - len).wrap(0, frames);
             ps = Select.kr(TRand.kr(0, 1, trig) < pitch, [1, Select.kr(TIRand.kr(0, 3, trig), [0.707, 0.841, 1.189, 1.414])]);
             dur = (TIRand.kr(2, maxStutters, trig) * len / ps).min(frames - len - (sr * 0.02)) / sr;
-            gate = Trig1.kr(trig, dur);
-            LocalOut.kr([gate, Trig1.kr(busy * (1 - gate), cool)]);
+            on = Trig1.kr(trig, dur);
+            el = Sweep.kr(trig, 1);
+            LocalOut.kr([on, Trig1.kr(busy * (1 - on), cool)]);
             t = T2A.ar(trig);
             len = Latch.ar(len, t);
             rel = Phasor.ar(t, ps, 0, len);
             pos = Latch.ar(start, t) + Select.ar(TRand.kr(0, 1, trig) < reverse, [rel, len - rel]);
-            fade = (len * 0.25).clip(1, sr * 0.005);
-            env = (rel / fade).clip(0, 1).min(((len - rel) / fade).clip(0, 1));
-            wet = BufRd.ar(2, glitchBuffer, pos, 1, 2) * env;
-            ReplaceOut.ar(bus, LinXFade2.ar(sig, wet, (Lag.kr(gate, 0.005) * mix * 2) - 1));
+            fade = (len * gate_amt * 0.25).clip(1, sr * 0.005);
+            env = (rel / fade).clip(0, 1).min(((len * gate_amt - rel) / fade).clip(0, 1));
+            wet = BufRd.ar(2, glitchBuffer, pos, 1, 2) * env * (1 - (decay * (el / dur.max(0.001)).clip(0, 1)));
+            ReplaceOut.ar(bus, LinXFade2.ar(sig, wet, (Lag.kr(on, 0.005) * mix * 2) - 1));
         }).add;
 
         SynthDef(\grainshaas, {
@@ -965,13 +966,13 @@ Engine_grains : CroneEngine {
         this.addCommand(\wf_sym, "f", { arg msg; fxWavefold.set(\sym, msg[1]) });
         this.addCommand("gl_ratio", "f", { arg msg; glRatio = msg[1]; fxGlitch.set(\glitch_ratio, msg[1]); this.updateGlitch });
         this.addCommand("gl_mix", "f", { arg msg; glMix = msg[1]; fxGlitch.set(\mix, msg[1]); this.updateGlitch });
-        this.addCommand(\gl_sync, "i", { arg msg; fxGlitch.set(\sync, msg[1]) });
-        this.addCommand(\gl_trig, "", { fxGlitch.set(\t_ext, 1) });
         this.addCommand(\gl_min, "f", { arg msg; fxGlitch.set(\minLength, msg[1]) });
         this.addCommand(\gl_max, "f", { arg msg; fxGlitch.set(\maxLength, msg[1]) });
         this.addCommand(\gl_stutters, "i", { arg msg; fxGlitch.set(\maxStutters, msg[1]) });
         this.addCommand(\gl_rev, "f", { arg msg; fxGlitch.set(\reverse, msg[1]) });
         this.addCommand(\gl_pitch, "f", { arg msg; fxGlitch.set(\pitch, msg[1]) });
+        this.addCommand(\gl_gate, "f", { arg msg; fxGlitch.set(\gate_amt, msg[1]) });
+        this.addCommand(\gl_decay, "f", { arg msg; fxGlitch.set(\decay, msg[1]) });
         this.addCommand(\ringmod_rate, "f", { arg msg; fxRingmod.set(\rate, msg[1]) });
         this.addCommand(\ringmod_sweep, "f", { arg msg; fxRingmod.set(\sweep, msg[1]) });
         this.addCommand(\spiral_bpm, "f", { arg msg; fxSpiral.set(\bpm, msg[1]) });

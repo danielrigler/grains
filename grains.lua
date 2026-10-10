@@ -2310,13 +2310,13 @@ local function setup_params()
   params:add_group("grains_glitch", "GLITCH", 9)
   params:add_control("gl_ratio", "Glitch", controlspec.new(0, 100, "lin", 1, 0, "%")) params:set_action("gl_ratio", function(v) engine.gl_ratio((v * 0.01) ^ 2) end)
   pct("gl_mix", "Mix", 100)
-  params:add_option("gl_sync", "Time Base", {"free", "clock"}, 1) params:set_action("gl_sync", function() Sync.gl_refresh() Sync.vis() end)
-  params:add_number("gl_div", "Division", 1, Sync.NDIV, 6, function() return Sync.gl_fmt() end)
   params:add_control("gl_min", "Min Length", controlspec.new(10, 500, "lin", 1, 75, "ms")) eng("gl_min", 0.001)
   params:add_control("gl_max", "Max Length", controlspec.new(20, 500, "lin", 1, 200, "ms")) eng("gl_max", 0.001)
   params:add_number("gl_stutters", "Max Stutters", 2, 20, 5) eng("gl_stutters")
   pct("gl_rev", "Reverse Chance", 0)
   pct("gl_pitch", "Pitch Chance", 0)
+  params:add_control("gl_gate", "Gate", controlspec.new(5, 100, "lin", 1, 100, "%")) eng("gl_gate", 0.01)
+  pct("gl_decay", "Decay", 0)
 
   params:add_group("grains_gen", "RANDOMIZE", 10)
   params:add_binary("do_dice", "Randomize!", "trigger", 0) params:set_action("do_dice", function(v) if v == 1 then Undo.mark() dice() end end)
@@ -2950,7 +2950,6 @@ function init()
 end
 
 function cleanup()
-  Sync.gl_stop()
   C.dead = true
   if C.check_co then pcall(clock.cancel, C.check_co) C.check_co = nil end
   if ui_metro then ui_metro:stop() end
