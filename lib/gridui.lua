@@ -6,21 +6,22 @@ local NVR, UP, DN = 6, 7, 8
 local BG, LO, HI, IDLE, BLINK = 2, 6, 15, 4, 4
 local FX_LO, FX_HI = 1, 12
 local STEP, REP, REP_WAIT = 0.05, 0.02, 0.3
-local NBIG, NSMALL, BIG, HYST = 24, 8, 3, 0.75
-local SWEEP = 2
+local NBIG, NSMALL, BIG, HYST = 24, 16, 2, 0.75
+local EQ, VQ, VHYST, FAST = 3, 4, 0.75, 0.5
 
 G.FX = {
   {"reverb_mix", "reverb"}, {"d_mix", "delay"}, {"sh_mix", "shimmer"},
-  {"wobble_mix", "wobble"}, {"dimension_mix", "dimension"}, {"stchorus_mix", "chorus"},
-  {"vibe_mix", "vibe"}, {"bc_mix", "crush"}, {"spiral_mix", "spiral"},
-  {"sub_mix", "sub"}, {"gl_ratio", "glitch"}, {"tilt", "tilt", true}
+  {"dimension_mix", "dimension"}, {"stchorus_mix", "chorus"}, {"vibe_mix", "vibe"},
+  {"wobble_mix", "wobble"}, {"bc_mix", "crush"}, {"spiral_mix", "spiral"},
+  {"sub_mix", "sub"}, {"gl_ratio", "glitch"}
 }
 local FX = G.FX
 
 local g, cfg, S
 local W = 16
 local led, sent = {}, {}
-local scan, sweep, resend = 0, 0, nil
+local scan, sweep, resend, sweep_on = 0, 0, nil, false
+local rq, pa, pb = {}, {}, {}
 local anchor, held, used = {}, {}, {}
 local modv
 local rep_d, rep_t, rep_k, rep_v
@@ -50,9 +51,17 @@ function G.redraw()
   local k = 0
   for i = 1, NVR do
     local live = i <= n and S.files[i]
-    local hi = S.on[i] and LO + (HI - LO) * (S.volf[i] or 0) or IDLE
+    local hi = IDLE
+    if S.on[i] then
+      local x, q = (S.volf[i] or 0) * VQ, rq[i]
+      if not q or x - q > VHYST or q - x > VHYST then q = floor(x + 0.5) rq[i] = q end
+      hi = LO + (HI - LO) * q / VQ
+    end
     if blink and S.frz[i] then hi = hi >= LO + BLINK and hi - BLINK or hi + BLINK end
     local a, b = (S.b0[i] or 0) * W, (S.b1[i] or 1) * W
+    local ma, mb = a - (pa[i] or a), b - (pb[i] or b)
+    pa[i], pb[i] = a, b
+    local eq = (ma > FAST or ma < -FAST or mb > FAST or mb < -FAST) and b - a >= 1 and 1 or EQ
     for c = 0, W - 1 do
       k = k + 1
       local l = 0
@@ -62,8 +71,8 @@ function G.redraw()
         local cov = up - lo
         l = BG
         if cov > 0 then
-          l = BG + (hi - BG) * cov
-          if l < BG + 1 then l = BG + 1 end
+          cov = floor(cov * eq + 0.5)
+          if cov > 0 or eq == EQ then l = BG + (hi - BG) * (cov < 1 and 1 or cov) / eq end
         end
       end
       led[k] = l
@@ -71,12 +80,14 @@ function G.redraw()
   end
   for c = 1, W do led[k + c], led[k + W + c] = 0, 0 end
   for c = 1, #FX do
-    if c > W - 4 then break end
+    if c > W - 5 then break end
     local f = FX[c]
     meter(k + c, k + W + c, params:get_raw(f[1]), f[3])
   end
-  meter(k + W - 3, k + W + W - 3, cfg.lfofrac())
-  for c = W - 2, W do
+  meter(k + W - 4, k + W + W - 4, cfg.lfofrac("rlfo"))
+  meter(k + W - 3, k + W + W - 3, cfg.lfofrac("vlfo"))
+  meter(k + W, k + W + W, cfg.densfrac())
+  for c = W - 2, W - 1 do
     led[k + c] = held[UP * 32 + c] and FX_HI or FX_LO
     led[k + W + c] = held[DN * 32 + c] and FX_HI or FX_LO
   end
@@ -123,12 +134,15 @@ local function row_key(x, i, z)
     cfg.bounds(i, (lo - 1) / W, (hi - lo + 1) / W)
   elseif not a then
     anchor[i], used[i], modv = x, false, i
+    cfg.grab(i)
   end
 end
 
 local function act(x, d, tap, v)
   if x == W - 1 then return cfg.vol(d, tap, v) end
-  if x == W - 3 then return cfg.lfo(d, tap) end
+  if x == W then return cfg.density(d, tap) end
+  if x == W - 3 then return cfg.lfo(d, tap, "vlfo") end
+  if x == W - 4 then return cfg.lfo(d, tap, "rlfo") end
   local f = FX[x]
   if d == 0 then
     params:set_raw(f[1], f[3] and 0.5 or 0)
@@ -145,7 +159,7 @@ local function fx_key(x, y, z)
     if rep_k == k then rep_k = nil end
     return
   end
-  if x < W - 3 and FX[x] == nil then return end
+  if x < W - 4 and FX[x] == nil then return end
   held[k] = true
   local v = x == W - 1 and modv or nil
   if v then used[v] = true end
@@ -162,16 +176,14 @@ local function key(x, y, z)
   if y <= NVR then
     row_key(x, y, z)
   elseif y <= DN then
-    if x == W or x == W - 2 then
+    if x == W - 2 or (x == W and modv) then
       held[y * 32 + x] = z == 1 or nil
       if z == 1 then
         if x == W - 2 then
           cfg.trig(y == UP)
-        elseif modv then
+        else
           used[modv] = true
           cfg.hold(modv, y == UP)
-        else
-          cfg.voices(y == UP and 1 or -1)
         end
       end
     else
@@ -181,15 +193,15 @@ local function key(x, y, z)
   G.redraw()
 end
 
+function G.held(i) return anchor[i] ~= nil end
+
 function G.tick(now)
   if rep_k and now >= rep_t then act(rep_k % 32, rep_d, nil, rep_v) end
   G.redraw()
-  if resend and g.device then
-    local N = W * DN
-    for _ = 1, SWEEP do
-      sweep = sweep % N + 1
-      resend(g, (sweep - 1) % W + 1, floor((sweep - 1) / W) + 1)
-    end
+  sweep_on = not sweep_on
+  if sweep_on and resend and g.device then
+    sweep = sweep % (W * DN) + 1
+    resend(g, (sweep - 1) % W + 1, floor((sweep - 1) / W) + 1)
   end
 end
 

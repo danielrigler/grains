@@ -493,7 +493,7 @@ Engine_grains : CroneEngine {
         bufSine = Buffer.alloc(context.server, 4096, 1);
         bufSine.sine2([2], [0.5], false);
         wobbleBuffer = Buffer.alloc(context.server, context.server.sampleRate.asInteger, 2);
-        glitchBuffer = Buffer.alloc(context.server, context.server.sampleRate.asInteger, 2);
+        glitchBuffer = Buffer.alloc(context.server, context.server.sampleRate.asInteger * 10, 2);
         spiralBuffer = Buffer.alloc(context.server, context.server.sampleRate * 3, 2);
 
         context.server.sync;
@@ -732,36 +732,31 @@ Engine_grains : CroneEngine {
         }).add;
 
         SynthDef(\grainsglitch, {
-            arg bus, probability = 5, glitch_ratio = 0.0, mix = 1, minLength = 0.075, maxLength = 0.2, reverse = 0, pitch = 0, maxStutters = 5;
-            var sig, bufFrames, writePos, rawTrigOn, trigOn, earlyOff, trigOff, isGlitching, isGlitching_fb, capturePos, chunkLength, chunkStart, stutterCount, autoOff, pitchShift, isReverse, relPos, bufReadPos, wet_raw, wet, fadeSamples, startRamp, endRamp, loopEnv, sr;
+            arg bus, glitch_ratio = 0.0, mix = 1, minLength = 0.075, maxLength = 0.2, reverse = 0, pitch = 0, maxStutters = 5, sync = 0, t_ext = 0;
+            var sig, sr, frames, busy, rest, writePos, idle, cool, trig, t, len, start, ps, dur, gate, rel, pos, fade, env, wet;
             sig = In.ar(bus, 2);
             sr = SampleRate.ir;
-            bufFrames = BufFrames.ir(glitchBuffer);
-            fadeSamples = sr * 0.06;
-            writePos = Phasor.ar(0, 1, 0, bufFrames);
+            frames = BufFrames.ir(glitchBuffer);
+            writePos = Phasor.ar(0, 1, 0, frames);
             BufWr.ar(sig, glitchBuffer, writePos);
-            isGlitching_fb = LocalIn.kr(1);
-            rawTrigOn = Dust.kr(probability * glitch_ratio);
-            trigOn = rawTrigOn * (1 - isGlitching_fb);
-            capturePos = Latch.kr(writePos, trigOn);
-            chunkLength = TRand.kr(minLength * sr, maxLength * sr, trigOn);
-            stutterCount = TIRand.kr(2, maxStutters, trigOn);
-            isReverse = TRand.kr(0, 1, trigOn) < reverse;
-            pitchShift = 1.0 + ((TRand.kr(0, 1, trigOn) < pitch) * (Select.kr(TIRand.kr(0, 3, trigOn), [0.707, 0.841, 1.189, 1.414]) - 1.0));
-            chunkStart = (capturePos - chunkLength).wrap(0, bufFrames - 1);
-            autoOff = TDelay.kr(trigOn, stutterCount * (chunkLength / sr) / pitchShift);
-            earlyOff = Dust.kr(probability * (1.0 - glitch_ratio).max(0.001)) * isGlitching_fb;
-            trigOff = earlyOff + autoOff;
-            isGlitching = SetResetFF.kr(trigOn, trigOff);
-            LocalOut.kr(isGlitching);
-            relPos = Phasor.ar(trigOn, pitchShift, 0, chunkLength, 0);
-            bufReadPos = chunkStart + Select.ar(isReverse, [relPos, chunkLength - relPos]);
-            wet_raw = BufRd.ar(2, glitchBuffer, bufReadPos, loop: 1, interpolation: 2);
-            startRamp = (relPos / fadeSamples).clip(0, 1);
-            endRamp = ((chunkLength - relPos) / fadeSamples).clip(0, 1);
-            loopEnv = startRamp.min(endRamp);
-            wet = wet_raw * 2 * loopEnv;
-            ReplaceOut.ar(bus, LinXFade2.ar(sig, wet, (isGlitching * mix * 2) - 1));
+            #busy, rest = LocalIn.kr(2);
+            idle = (2 + maxStutters) * (minLength + maxLength) * 0.25 * (1 - glitch_ratio).max(0.01) / glitch_ratio.max(0.0001);
+            cool = (idle * 0.5).min(4);
+            trig = Select.kr(sync, [Dust.kr((idle - cool).reciprocal) * (1 - rest), CoinGate.kr(glitch_ratio, t_ext)]) * (1 - busy);
+            len = TRand.kr(minLength, maxLength, trig) * sr;
+            start = (Latch.kr(writePos, trig) - len).wrap(0, frames);
+            ps = Select.kr(TRand.kr(0, 1, trig) < pitch, [1, Select.kr(TIRand.kr(0, 3, trig), [0.707, 0.841, 1.189, 1.414])]);
+            dur = (TIRand.kr(2, maxStutters, trig) * len / ps).min(frames - len - (sr * 0.02)) / sr;
+            gate = Trig1.kr(trig, dur);
+            LocalOut.kr([gate, Trig1.kr(busy * (1 - gate), cool)]);
+            t = T2A.ar(trig);
+            len = Latch.ar(len, t);
+            rel = Phasor.ar(t, ps, 0, len);
+            pos = Latch.ar(start, t) + Select.ar(TRand.kr(0, 1, trig) < reverse, [rel, len - rel]);
+            fade = (len * 0.25).clip(1, sr * 0.005);
+            env = (rel / fade).clip(0, 1).min(((len - rel) / fade).clip(0, 1));
+            wet = BufRd.ar(2, glitchBuffer, pos, 1, 2) * env;
+            ReplaceOut.ar(bus, LinXFade2.ar(sig, wet, (Lag.kr(gate, 0.005) * mix * 2) - 1));
         }).add;
 
         SynthDef(\grainshaas, {
@@ -970,7 +965,8 @@ Engine_grains : CroneEngine {
         this.addCommand(\wf_sym, "f", { arg msg; fxWavefold.set(\sym, msg[1]) });
         this.addCommand("gl_ratio", "f", { arg msg; glRatio = msg[1]; fxGlitch.set(\glitch_ratio, msg[1]); this.updateGlitch });
         this.addCommand("gl_mix", "f", { arg msg; glMix = msg[1]; fxGlitch.set(\mix, msg[1]); this.updateGlitch });
-        this.addCommand(\gl_prob, "f", { arg msg; fxGlitch.set(\probability, msg[1]) });
+        this.addCommand(\gl_sync, "i", { arg msg; fxGlitch.set(\sync, msg[1]) });
+        this.addCommand(\gl_trig, "", { fxGlitch.set(\t_ext, 1) });
         this.addCommand(\gl_min, "f", { arg msg; fxGlitch.set(\minLength, msg[1]) });
         this.addCommand(\gl_max, "f", { arg msg; fxGlitch.set(\maxLength, msg[1]) });
         this.addCommand(\gl_stutters, "i", { arg msg; fxGlitch.set(\maxStutters, msg[1]) });

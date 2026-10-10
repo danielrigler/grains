@@ -105,6 +105,31 @@ function S.dly_fmt()
   return div_label(pv("d_div")) .. "  " .. unit
 end
 
+local gl_co = nil
+
+function S.gl_stop()
+  if gl_co then clock.cancel(gl_co) gl_co = nil end
+end
+
+function S.gl_refresh()
+  local on = pv("gl_sync") == 2
+  engine.gl_sync(on and 1 or 0)
+  if not on then return S.gl_stop() end
+  gl_co = gl_co or clock.run(function()
+    while true do
+      clock.sync(div_beats(pv("gl_div")))
+      if pv("gl_ratio") > 0 then engine.gl_trig() end
+    end
+  end)
+end
+
+function S.gl_fmt()
+  local t = div_beats(pv("gl_div")) * beat_sec()
+  local unit = (t < 1) and string.format("%d ms", floor(t * 1000 + 0.5))
+                        or string.format("%.2f s", t)
+  return div_label(pv("gl_div")) .. "  " .. unit
+end
+
 local mo = {
   v = 0, sent = nil, last = nil, catch = 0, was = false,
   fp = 0, k = 0
@@ -389,8 +414,79 @@ local function v_tick(dt)
   end
 end
 
+S.ron = false
+local rmode, rshape, rdepth, rspread = 1, 1, 0, 0
+local rhz, rbeats, rsync = 0.05, 8, false
+local rpos, rcyc = 0, 0
+local RMIN = 0.03
+
+function S.rset()
+  S.ron = pv("rlfo") == 2
+  rmode, rshape = pv("rlfo_mode"), pv("rlfo_shape")
+  rdepth, rspread = pv("rlfo_depth") * 0.01, pv("rlfo_spread") * 0.01
+  rhz, rsync = pv("rlfo_freq"), pv("rlfo_sync") == 2
+  rbeats = div_beats(pv("rlfo_div"))
+end
+
+function S.rfmt()
+  local t = div_beats(pv("rlfo_div")) * beat_sec()
+  local unit = (t < 60) and string.format("%.2f s", t)
+                        or string.format("%.1f min", t / 60)
+  return div_label(pv("rlfo_div")) .. "  " .. unit
+end
+
+local function r_tick(dt)
+  if rsync then
+    local b = beats_now() / rbeats
+    rcyc = floor(b)
+    rpos = b - rcyc
+  else
+    rpos = rpos + dt * rhz
+    if rpos >= 1 then
+      local w = floor(rpos)
+      rpos = rpos - w
+      rcyc = rcyc + w
+    end
+  end
+end
+
+local function rval(i, n, off, s)
+  local ph = rpos + off + rspread * (i - 1) / n
+  local w = floor(ph)
+  return mo_shape(rshape, rcyc + w, ph - w, rspread > 0 and i * 7919 or 7919, s)
+end
+
+
+local function fold(x, l)
+  if l <= 0 then return 0 end
+  x = x % (2 * l)
+  return x > l and 2 * l - x or x
+end
+
+local LMIN = log(RMIN)
+local ZOOM = 4 * log(2)
+
+function S.region(i, a, b, n)
+  if rdepth <= 0 then return a, b end
+  if n < 1 then n = 1 end
+  local w = b - a
+  if rmode ~= 1 then
+    local u = rval(i, n, rmode == 3 and 0.25 or 0, 20 + i)
+    local lw, z = log(max(w, RMIN)), rdepth * ZOOM
+    local nw = exp(lw + (u * 2 - 1) * (u > 0.5 and min(z, -lw) or min(z, lw - LMIN)))
+    a = nw > w and a * (1 - nw) / (1 - w) or (a + b - nw) * 0.5
+    w = nw
+  end
+  if rmode ~= 2 then
+    local l = 1 - w
+    a = fold(a + (rval(i, n, 0, 10 + i) * 2 - 1) * rdepth * l, l)
+  end
+  return a, a + w
+end
+
 local MO_CTL = {"morph_depth", "morph_shape", "morph_sync", "morph_slew"}
 local V_CTL = {"vlfo_shape", "vlfo_depth", "vlfo_sync"}
+local R_CTL = {"rlfo_mode", "rlfo_shape", "rlfo_depth", "rlfo_spread", "rlfo_sync"}
 
 function S.vis()
   local d = S.dly_synced()
@@ -398,6 +494,7 @@ function S.vis()
   local m = on and S.mo_synced()
   if d then params:show("d_div") else params:hide("d_div") end
   if d then params:hide("d_time") else params:show("d_time") end
+  if pv("gl_sync") == 2 then params:show("gl_div") else params:hide("gl_div") end
   for _, id in ipairs(MO_CTL) do
     if on then params:show(id) else params:hide(id) end
   end
@@ -409,6 +506,12 @@ function S.vis()
   end
   if v and vsync then params:show("vlfo_div") else params:hide("vlfo_div") end
   if v and not vsync then params:show("vlfo_freq") else params:hide("vlfo_freq") end
+  local r = S.ron
+  for _, id in ipairs(R_CTL) do
+    if r then params:show(id) else params:hide(id) end
+  end
+  if r and rsync then params:show("rlfo_div") else params:hide("rlfo_div") end
+  if r and not rsync then params:show("rlfo_freq") else params:hide("rlfo_freq") end
   if _menu and type(_menu.rebuild_params) == "function" then
     _menu.rebuild_params()
   end
@@ -464,6 +567,7 @@ function S.tick(now)
 
   mo_tick(dt)
   if S.von then v_tick(dt) end
+  if S.ron then r_tick(dt) end
 end
 
 return S

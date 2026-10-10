@@ -40,9 +40,16 @@
 -- GRID rows 1-6: voices
 -- press: move section
 -- hold+press: set section
--- rows 7-8: fx up/down, 13: lfo
--- 14: reseed/dice, 15: vol
--- 16: voices, both: reset
+-- hold: grab moving section
+-- rows 7-8: up/down
+-- 1-11: reverb delay shimmer
+-- dimension chorus vibe wobble
+-- crush spiral sub glitch
+-- 12: region lfo depth
+-- 13: volume lfo depth
+-- 14: reseed/randomize
+-- 15: volume, 16: density
+-- both keys: reset/off
 -- hold row +15: vol +16: lock/frz
 --
 -- Based on Graintopia by
@@ -117,7 +124,7 @@ C.MORPH_SKIP = {morph = true, source = true, chunk = true, lseed = true, level =
 local function morph_skip(id)
   return (C.MORPH_SKIP[id]
       or id:find("^morph") or id:find("^vlfo") or id:find("^do_")
-      or id:find("^lock_") or id:find("^freeze") or id:find("^rec_")) ~= nil
+      or id:find("^lock_") or id:find("^freeze") or id:find("^rec_") or id:find("^rlfo")) ~= nil
 end
 local morph_first, morph_last
 
@@ -1053,6 +1060,9 @@ end
 
 local trimming = false
 local blo, bhi = {}, {}
+local rlo, rhi = {}, {}
+local rg, rtouch = {}, {}
+C.RTOUCH = 1.5
 
 local function trim_width(i)
   if trimming then return end
@@ -1067,6 +1077,15 @@ local function trim_width(i)
   if glide <= 0 then S.b0[i], S.b1[i] = blo[i], bhi[i] end
   dirty = true
   trimming = false
+end
+
+local function region_grab(i)
+  rtouch[i] = util.time()
+  if not Sync.ron or vfrozen[i] or not rlo[i] or (rg[i] or 1) < 0.001 then return end
+  local p = PID[i]
+  rg[i] = 0
+  params:set(p.bstart, rlo[i] * 100)
+  params:set(p.bwidth, (rhi[i] - rlo[i]) * 100)
 end
 
 local layout_busy = false
@@ -1182,23 +1201,48 @@ local function physics_tick()
     for i = 1, NV do xf_step(i) end
   end
 
+  local ron, now = Sync.ron, util.time()
+  for i = 1, NV do
+    if not (vfrozen[i] and rlo[i]) then
+      local a, b = blo[i] or 0, bhi[i] or 1
+      local g = rg[i] or 1
+      if Grid.held(i) or (rtouch[i] and now - rtouch[i] < C.RTOUCH) then
+        g = g * 0.6
+      else
+        g = g + (1 - g) * 0.05
+      end
+      rg[i] = g
+      if ron and g > 0.001 then
+        local ma, mb = Sync.region(i, a, b, nva)
+        a, b = a + (ma - a) * g, b + (mb - b) * g
+      end
+      rlo[i], rhi[i] = a, b
+    end
+  end
+
   local gliding = glide > 0
+  local b0, b1 = S.b0, S.b1
   if gliding then
     glide = glide - 1
     dirty = true
-    local b0, b1 = S.b0, S.b1
     if glide == 0 then
-      for i = 1, NV do b0[i], b1[i] = blo[i], bhi[i] end
+      for i = 1, NV do b0[i], b1[i] = rlo[i], rhi[i] end
       gliding = false
     else
       for i = 1, NV do
         local x, y = b0[i], b1[i]
-        b0[i] = x + (blo[i] - x) * GLIDE_K
-        b1[i] = y + (bhi[i] - y) * GLIDE_K
+        b0[i] = x + (rlo[i] - x) * GLIDE_K
+        b1[i] = y + (rhi[i] - y) * GLIDE_K
       end
     end
-  elseif steps == 0 then
-    return
+  else
+    for i = 1, NV do
+      if abs(b0[i] - rlo[i]) > 0.002 or abs(b1[i] - rhi[i]) > 0.002 then
+        b0[i], b1[i] = rlo[i], rhi[i]
+        dirty = true
+      end
+    end
+    if steps == 0 then return end
   end
 
   for i = 1, nva do
@@ -1209,7 +1253,7 @@ local function physics_tick()
       if steps > 0 and not vfrozen[i] then
         local pit = pits[i]
         local window = pit.window
-        local a, b = blo[i] * SPAN, bhi[i] * SPAN
+        local a, b = rlo[i] * SPAN, rhi[i] * SPAN
         local m = vmr[i] or 1
         for _ = 1, steps do pit:update(a, b, m) end
 
@@ -2081,7 +2125,7 @@ local function setup_params()
 
   params:add_separator(" ")
 
-  params:add_group("grains_main", "VOICES", 20)
+  params:add_group("grains_main", "VOICES", 14)
   params:add_control("level", "Level", controlspec.new(DB_FLOOR, C.LEVEL_MAX_DB, "lin", 0.5, -20, "dB"))
   params:add_number("density", "Density", 0, NV * NL, 0) params:set_action("density", function(v) if not layout_busy then local m = (DENSP or params:lookup_param("density")).max dfrac = m > 0 and clamp(v / m, 0, 1) or 0 end push_population() end)
   params:add_control("tuning", "Tuning", controlspec.new(-48, 48, "lin", 1, 0, "st"))
@@ -2106,6 +2150,8 @@ local function setup_params()
   params:add_control("panwidth", "Pan Width", controlspec.new(0, 100, "lin", 1, 90, "%"))
   params:add_control("ampfloor", "Level Floor", controlspec.new(0, 100, "lin", 1, 25, "%"))
   params:add_binary("freeze_all", "Freeze All", "toggle", 0) params:set_action("freeze_all", freeze_refresh)
+
+  params:add_group("grains_lfo", "LFO", 14)
   local function vlfo_apply()
     Sync.vset(params:get("vlfo_shape"), params:get("vlfo_freq"), params:get("vlfo_depth"))
     Sync.vlagdirty = false
@@ -2125,6 +2171,15 @@ local function setup_params()
   params:add_control("vlfo_freq", "Free Cycle", controlspec.new(0.02, 10, "exp", 0, 0.2, "Hz")) params:set_action("vlfo_freq", vlfo_apply)
   params:add_option("vlfo_sync", "Time Base", {"free", "clock"}, 1) params:set_action("vlfo_sync", function() vlfo_apply() Sync.vis() end)
   params:add_number("vlfo_div", "Division", 1, Sync.NDIV, Sync.DIV_BAR, function() return Sync.vfmt() end) params:set_action("vlfo_div", vlfo_apply)
+  local function rlfo_vis() Sync.rset() Sync.vis() end
+  params:add_option("rlfo", "Region LFO", {"off", "on"}, 1) params:set_action("rlfo", rlfo_vis)
+  params:add_option("rlfo_mode", "Mode", {"scan", "breathe", "orbit"}, 1) params:set_action("rlfo_mode", Sync.rset)
+  params:add_option("rlfo_shape", "Shape", Sync.SHAPES, 1) params:set_action("rlfo_shape", Sync.rset)
+  params:add_control("rlfo_depth", "Depth", controlspec.new(0, 100, "lin", 1, 50, "%")) params:set_action("rlfo_depth", Sync.rset)
+  params:add_control("rlfo_spread", "Spread", controlspec.new(0, 100, "lin", 1, 50, "%")) params:set_action("rlfo_spread", Sync.rset)
+  params:add_control("rlfo_freq", "Free Cycle", controlspec.new(0.01, 4, "exp", 0, 0.05, "Hz")) params:set_action("rlfo_freq", Sync.rset)
+  params:add_option("rlfo_sync", "Time Base", {"free", "clock"}, 1) params:set_action("rlfo_sync", rlfo_vis)
+  params:add_number("rlfo_div", "Division", 1, Sync.NDIV, 16, function() return Sync.rfmt() end) params:set_action("rlfo_div", Sync.rset)
 
   params:add_group("grains_tune", "TUNING", 15)
   local defaults = {
@@ -2227,7 +2282,7 @@ local function setup_params()
     Reso.update()
   end)
   params:add_control("reso_decay", "Decay", controlspec.new(0.01, 5, "exp", 0, 2, "s")) eng("reso_decay")
-  params:add_number("reso_root", "Root", 24, 128, 48, function(p) return MusicUtil.note_num_to_name(p:get(), true) end) params:set_action("reso_root", function() Reso.update() end)
+  params:add_number("reso_root", "Root", 24, 128, 28, function(p) return MusicUtil.note_num_to_name(p:get(), true) end) params:set_action("reso_root", function() Reso.update() end)
   params:add_option("reso_voicing", "Voicing", Reso.NAMES, 2) params:set_action("reso_voicing", function(v) Reso.voicing(v) Reso.update() end)
 
   params:add_group("grains_ringmod", "RINGMOD", 3)
@@ -2252,10 +2307,11 @@ local function setup_params()
   params:add_group("grains_ott", "MULTIBAND", 1)
   pct("ott_mix", "Comp", 0)
 
-  params:add_group("grains_glitch", "GLITCH", 8)
-  pct("gl_ratio", "Glitch", 0)
+  params:add_group("grains_glitch", "GLITCH", 9)
+  params:add_control("gl_ratio", "Glitch", controlspec.new(0, 100, "lin", 1, 0, "%")) params:set_action("gl_ratio", function(v) engine.gl_ratio((v * 0.01) ^ 2) end)
   pct("gl_mix", "Mix", 100)
-  params:add_taper("gl_prob", "Frequency", 0.1, 20, 5, 1, "Hz") eng("gl_prob")
+  params:add_option("gl_sync", "Time Base", {"free", "clock"}, 1) params:set_action("gl_sync", function() Sync.gl_refresh() Sync.vis() end)
+  params:add_number("gl_div", "Division", 1, Sync.NDIV, 6, function() return Sync.gl_fmt() end)
   params:add_control("gl_min", "Min Length", controlspec.new(10, 500, "lin", 1, 75, "ms")) eng("gl_min", 0.001)
   params:add_control("gl_max", "Max Length", controlspec.new(20, 500, "lin", 1, 200, "ms")) eng("gl_max", 0.001)
   params:add_number("gl_stutters", "Max Stutters", 2, 20, 5) eng("gl_stutters")
@@ -2275,8 +2331,8 @@ local function setup_params()
   params:add_group("grains_bounds", "PER VOICE", NV * 4)
   for i = 1, NV do
     local p = PID[i]
-    params:add_control(p.bstart, i .. " start", controlspec.new(0, 100, "lin", 0.2, 0, "%"))
-    params:add_control(p.bwidth, i .. " width", controlspec.new(0, 100, "lin", 0.2, 100, "%"))
+    params:add_control(p.bstart, i .. " start", controlspec.new(0, 100, "lin", 0, 0, "%"))
+    params:add_control(p.bwidth, i .. " width", controlspec.new(0, 100, "lin", 0, 100, "%"))
     params:set_action(p.bstart, function() trim_width(i) end)
     params:set_action(p.bwidth, function() trim_width(i) end)
     params:add_control(p.vol, i .. " volume", controlspec.new(Shuffle.VOL_MIN_DB, Shuffle.VOL_MAX_DB, "lin", 0.5, C.VOL_DEFAULT_DB, "dB")) params:set_action(p.vol, push_voices)
@@ -2510,6 +2566,7 @@ end
 
 local function edit(suffix, d)
   if sel < 1 then return end
+  region_grab(sel)
   params:delta(PID[sel][suffix], d)
 end
 
@@ -2746,17 +2803,31 @@ function init()
   push_voice_params()
   push_per_voice()
   push_population()
-  C.LFO_RMAX = params:lookup_param("vlfo_freq").controlspec:unmap(1)
+  C.dens_t = 0
   Grid.init{
     S = S,
     count = function() return nva end,
-    voices = src.nudge_count,
+    densfrac = function()
+      local p = DENSP or params:lookup_param("density")
+      return p.max > 0 and p:get() / p.max or 0
+    end,
+    density = function(d, tap)
+      if d == 0 then return end
+      local now = util.time()
+      if not tap and now - C.dens_t < 0.08 then return end
+      C.dens_t = now
+      Undo.mark("density")
+      params:delta("density", d)
+      pop_show("fx", "density: " .. params:string("density"))
+    end,
     pop = function(label, id)
       pop_show("fx", label .. ": " .. (id == "reverb_mix" and fast_db(params:get(id)) or params:string(id)))
     end,
+    grab = region_grab,
     bounds = function(i, a, w)
       local p = PID[i]
       Undo.mark("grid" .. i)
+      rtouch[i] = util.time()
       w = w and w * 100 or p.widthp:get()
       a = a * 100
       if a + w > 100 then a = 100 - w end
@@ -2773,7 +2844,7 @@ function init()
       if d == 0 then
         params:set(id, C.VOL_DEFAULT_DB)
       else
-        Shuffle.vol:nudge(i, d * (tap and 2 or 0.5))
+        Shuffle.vol:nudge(i, d * (tap and 2 or 1))
       end
       pop_show("fx", "vol " .. i .. ": " .. params:string(id))
     end,
@@ -2782,38 +2853,23 @@ function init()
       toggle_param(id)
       pop_show("fx", (lock and "lock " or "freeze ") .. i .. (params:get(id) == 1 and ": on" or ": off"))
     end,
-    lfofrac = function()
-      if params:get("vlfo") ~= 2 then return 0 end
-      local x = params:get("vlfo_sync") == 2
-        and 1 - (params:get("vlfo_div") - 1) / (Sync.NDIV - 1)
-        or params:get_raw("vlfo_freq") / C.LFO_RMAX
-      return 0.1 + 0.9 * (x > 1 and 1 or x)
+    lfofrac = function(p)
+      if params:get(p) ~= 2 then return 0 end
+      return params:get_raw(p .. "_depth")
     end,
-    lfo = function(d, tap)
-      local on, clk = params:get("vlfo") == 2, params:get("vlfo_sync") == 2
-      if d == 0 then
-        params:set("vlfo", 1)
-      elseif not on then
-        if d < 0 then return end
-        params:set("vlfo", 2)
-      elseif clk then
-        if not tap then return end
-        local v = params:get("vlfo_div") - d
-        if v > Sync.NDIV then
-          params:set("vlfo", 1)
-        elseif v >= 1 and (d < 0 or Sync.div_beats(v) * clock.get_beat_sec() >= 1) then
-          params:set("vlfo_div", v)
-        end
+    lfo = function(d, tap, p)
+      local on, id = params:get(p) == 2, p .. "_depth"
+      local dp = params:lookup_param(id)
+      local mx = dp.controlspec.maxval
+      local v = d == 0 and 0 or clamp((on and dp:get() or 0) + d * mx * (tap and 0.05 or 0.01), 0, mx)
+      if v <= 0 then
+        if on then params:set(p, 1) end
       else
-        local r, rmax = params:get_raw("vlfo_freq"), C.LFO_RMAX
-        if d < 0 and r <= 0 then
-          params:set("vlfo", 1)
-        elseif d < 0 or r < rmax then
-          params:set_raw("vlfo_freq", clamp(r + d * (tap and 0.05 or 0.02), 0, d > 0 and rmax or 1))
-        end
+        params:set(id, v)
+        if not on then params:set(p, 2) end
       end
-      pop_show("fx", "lfo: " .. (params:get("vlfo") ~= 2 and "off"
-        or params:string(clk and "vlfo_div" or "vlfo_freq")))
+      pop_show("fx", (p == "rlfo" and "region LFO: " or "vol LFO: ") .. (v <= 0 and "off"
+        or p == "rlfo" and string.format("%d%%", floor(v + 0.5)) or string.format("%.1f dB", dp:get())))
     end,
     trig = function(top)
       Undo.mark()
@@ -2894,6 +2950,7 @@ function init()
 end
 
 function cleanup()
+  Sync.gl_stop()
   C.dead = true
   if C.check_co then pcall(clock.cancel, C.check_co) C.check_co = nil end
   if ui_metro then ui_metro:stop() end
