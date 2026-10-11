@@ -26,6 +26,49 @@ local anchor, held, used = {}, {}, {}
 local modv
 local rep_d, rep_t, rep_k, rep_v
 
+local tn = 0
+
+local function toga_path()
+  local d = norns and norns.state and norns.state.data
+  return d and (d .. "toga_clients") or nil
+end
+
+local function toga_save()
+  local p = toga_path()
+  if not p then return end
+  local f = io.open(p, "w")
+  if not f then return end
+  local n = #g.dest
+  for k = n > 4 and n - 3 or 1, n do
+    local d = g.dest[k]
+    f:write(tostring(d[1]), " ", tostring(d[2]), "\n")
+  end
+  f:close()
+end
+
+local function toga_restore()
+  local p = toga_path()
+  local f = p and io.open(p, "r")
+  if not f then return end
+  local dest = g.dest
+  for line in f:lines() do
+    local ip, port = line:match("^(%S+)%s+(%d+)$")
+    if ip then
+      local seen = false
+      for _, d in ipairs(dest) do
+        if d[1] == ip then d[2] = port seen = true end
+      end
+      if not seen then dest[#dest + 1] = {ip, port} end
+    end
+  end
+  f:close()
+  tn = #dest
+  if tn > 0 then
+    g:send_connected(nil, true)
+    g:refresh(true)
+  end
+end
+
 local function resize()
   W = (g and g.cols and g.cols > 0) and g.cols or 16
   for k = 1, W * DN do sent[k] = -99 end
@@ -196,6 +239,10 @@ end
 function G.held(i) return anchor[i] ~= nil end
 
 function G.tick(now)
+  if g.dest and #g.dest ~= tn then
+    tn = #g.dest
+    toga_save()
+  end
   if rep_k and now >= rep_t then act(rep_k % 32, rep_d, nil, rep_v) end
   G.redraw()
   sweep_on = not sweep_on
@@ -213,6 +260,10 @@ function G.init(c)
   resend = g.update_led
   grid.add = resize
   resize()
+  if g.dest then
+    if util.make_dir and norns and norns.state and norns.state.data then util.make_dir(norns.state.data) end
+    toga_restore()
+  end
 end
 
 function G.cleanup()
