@@ -916,7 +916,7 @@ Engine_grains : CroneEngine {
             voice3 = chorus.(sig, predelay * 0.85, rate * 0.98, depth * 1.0);
             voice4 = chorus.(sig, predelay * 1.05, rate * 1.02, depth * 0.7);
             wet = [voice1[0] * 0.25 + voice2[0] * 0.25 + voice3[1] * 0.25 + voice4[1] * 0.25, voice1[1] * 0.25 + voice2[1] * 0.25 + voice3[0] * 0.25 + voice4[0] * 0.25];
-            wide = wet * 4;
+            wide = wet * 6;
             ReplaceOut.ar(bus, XFade2.ar(sig, wide, mix * 2 - 1));
         }).add;
 
