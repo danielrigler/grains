@@ -205,7 +205,7 @@ local function mo_arm()
   mo.sent = nil
   mo.catch = CATCH_DUR
   wa[0], wb[0], wkk[0] = mo.v, mo.v, nil
-  mo.fp = 0
+  mo.fp, mo.acc, mo.n = 0, 0, 0
 end
 
 local function mo_depth()
@@ -221,6 +221,12 @@ local function mo_tick(dt)
     if on then mo_arm() else return end
   end
   if not on then return end
+  mo.acc = (mo.acc or 0) + dt
+  mo.n = (mo.n or 0) + 1
+  if mo.n < WRITE_EVERY then return end
+  mo.n = 0
+  dt = mo.acc
+  mo.acc = 0
   mo_seed = pv("morph_seed")
 
   local k, ph
@@ -256,9 +262,6 @@ local function mo_tick(dt)
     mo.v = tgt
   end
 
-  mo.n = (mo.n or 0) + 1
-  if mo.n < WRITE_EVERY then return end
-  mo.n = 0
   if mo.sent == nil or abs(mo.v - mo.sent) > 4e-4 then
     mo.sent = mo.v
     S.driving = true
@@ -267,7 +270,6 @@ local function mo_tick(dt)
   end
 end
 
-local VFAST = 2
 local VLAG_MIN, VLAG_OFF, VLAG_K = 0.02, 1, 0.55
 local LK = log(10) / 20
 
@@ -279,7 +281,7 @@ S.vpush = nil
 S.vbase, S.vph, S.va, S.vg, S.vd = {}, {}, {}, {}, {}
 
 local VSHOW = 4
-local VDIV_SLOW = 2
+local CHZ = 30
 
 function S.set_rate(hz)
   if type(hz) ~= "number" or hz < 1 then return end
@@ -287,9 +289,7 @@ function S.set_rate(hz)
   if q < 1 then q = 1 end
   WRITE_EVERY = q
   VSHOW = q
-
-  VDIV_SLOW = floor(hz / 30 + 0.5)
-  if VDIV_SLOW < 1 then VDIV_SLOW = 1 end
+  CHZ = hz
 end
 local vshape, vfreq, vdepth, vndb = 1, 0.5, 0, 0
 local vpos, vcyc, vframe, vsub, vdiv = 0, 0, 0, 0, 2
@@ -319,7 +319,9 @@ local function vrate()
     if t > 0.001 then f = 1 / t end
   end
   vhz = f
-  vdiv = (f > VFAST) and 1 or VDIV_SLOW
+  local r = f * 48
+  vdiv = floor(CHZ / (r > 6 and r or 6))
+  if vdiv < 1 then vdiv = 1 elseif vdiv > 5 then vdiv = 5 end
   S.vlagdirty = true
 end
 
@@ -428,34 +430,35 @@ end
 local function rval(i, n, off, s)
   local ph = rpos + off + rspread * (i - 1) / n
   local w = floor(ph)
-  return mo_shape(rshape, rcyc + w, ph - w, rspread > 0 and i * 7919 or 7919, s)
+  local v = mo_shape(rshape, rcyc + w, ph - w, rspread > 0 and i * 7919 or 7919, s)
+  return rshape == 5 and v * 0.7 + 0.15 or v
 end
 
-
-local function fold(x, l)
-  if l <= 0 then return 0 end
-  x = x % (2 * l)
-  return x > l and 2 * l - x or x
-end
 
 local LMIN = log(RMIN)
 local ZOOM = 4 * log(2)
+
+local function fold(x)
+  x = x % 2
+  return x > 1 and 2 - x or x
+end
 
 function S.region(i, a, b, n)
   if rdepth <= 0 then return a, b end
   if n < 1 then n = 1 end
   local w = b - a
+  local t = w < 1 and (a / (1 - w) - 0.5) * (1 - 0.5 * rdepth) + 0.5 or 0.5
   if rmode ~= 1 then
-    local u = rval(i, n, rmode == 3 and 0.25 or 0, 20 + i)
-    local lw, z = log(max(w, RMIN)), rdepth * ZOOM
-    local nw = exp(lw + (u * 2 - 1) * (u > 0.5 and min(z, -lw) or min(z, lw - LMIN)))
-    a = nw > w and a * (1 - nw) / (1 - w) or (a + b - nw) * 0.5
-    w = nw
+    local lw, z = log(w > RMIN and w or RMIN), rdepth * ZOOM
+    local lo, hi = lw - z, lw + z
+    if hi > 0 then lo, hi = lo - hi, 0 end
+    if lo < LMIN then hi, lo = min(hi + LMIN - lo, 0), LMIN end
+    w = exp(lo + rval(i, n, rmode == 3 and 0.25 or 0, 20 + i) * (hi - lo))
   end
   if rmode ~= 2 then
-    local l = 1 - w
-    a = fold(a + (rval(i, n, 0, 10 + i) * 2 - 1) * rdepth * l, l)
+    t = fold(t + (rval(i, n, 0, 10 + i) - 0.5) * rdepth)
   end
+  a = t * (1 - w)
   return a, a + w
 end
 
@@ -527,7 +530,7 @@ function S.tick(now)
   now = now or util.time()
   local dt = mo.last and (now - mo.last) or 0
   mo.last = now
-  if dt < 0 or dt > 0.5 then dt = 1 / 60 end
+  if dt < 0 or dt > 0.5 then dt = 1 / CHZ end
 
   local vclk = S.von and vsync
   if dly_on or vclk then

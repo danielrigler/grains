@@ -1213,7 +1213,7 @@ local function physics_tick()
         g = g + (1 - g) * 0.05
       end
       rg[i] = g
-      if ron and g > 0.001 then
+      if ron and g > 0.001 and i <= nva then
         local ma, mb = Sync.region(i, a, b, nva)
         a, b = a + (ma - a) * g, b + (mb - b) * g
       end
