@@ -12,6 +12,14 @@ M.VOL_SLACK = 76
 local floor, max, min, abs, sqrt, random =
   math.floor, math.max, math.min, math.abs, math.sqrt, math.random
 local nvoices, mark = function() return 0 end, function() end
+local snapfn = nil
+
+function M.snap(x)
+  local v = snapfn and snapfn(x) or floor(x + 0.5)
+  while v > M.PITCH_HI do v = v - 12 end
+  while v < M.PITCH_LO do v = v + 12 end
+  return v
+end
 
 local E = {}
 E.__index = E
@@ -20,14 +28,14 @@ function E:kick(d)
   local n = nvoices()
   if n < 1 then return end
   local pos, vel, ids = self.pos, self.vel, self.ids
-  local lo, hi, q, rate = self.lo, self.hi, self.quant, self.rate
+  local lo, hi, q, rate, sn = self.lo, self.hi, self.quant, self.rate, self.snap
   local g = max(0, min(0.99, M.GLIDE))
   local k = sqrt(1 - g * g)
   local sum = 0
   for i = 1, n do
     local cur = params:get(ids[i])
     local p = pos[i]
-    if p == nil or abs(floor(p / q + 0.5) * q - cur) > 1e-6 then p = cur end
+    if p == nil or abs((sn and sn(p) or floor(p / q + 0.5) * q) - cur) > 1e-6 then p = cur end
     pos[i] = p
     vel[i] = (vel[i] or random() * 2 - 1) * g + (random() * 2 - 1) * k
     sum = sum + vel[i]
@@ -38,7 +46,7 @@ function E:kick(d)
     if p < lo then p, vel[i] = lo, -vel[i]
     elseif p > hi then p, vel[i] = hi, -vel[i] end
     pos[i] = p
-    params:set(ids[i], floor(p / q + 0.5) * q)
+    params:set(ids[i], sn and sn(p) or floor(p / q + 0.5) * q)
   end
   mark()
 end
@@ -73,6 +81,7 @@ end
 
 function M.init(cfg)
   nvoices, mark = cfg.count, cfg.dirty
+  snapfn = cfg.snap
   M.vol = setmetatable({
     ids = cfg.vol_ids, rate = M.VOL_RATE, level = true,
     lo = M.VOL_LO, hi = M.VOL_HI, quant = 0.5,
@@ -81,7 +90,7 @@ function M.init(cfg)
   }, E)
   M.pitch = setmetatable({
     ids = cfg.tune_ids, rate = M.PITCH_RATE,
-    lo = M.PITCH_LO, hi = M.PITCH_HI, quant = 1,
+    lo = M.PITCH_LO, hi = M.PITCH_HI, quant = 1, snap = M.snap,
     emin = M.PITCH_LO, emax = M.PITCH_HI, slack = 0,
     pos = {}, vel = {}, shadow = {}, at = {}
   }, E)

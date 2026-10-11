@@ -1,7 +1,7 @@
 --
 --
 --
---          grains v0.16
+--          grains v0.17
 --           @dddstudio
 --
 --
@@ -119,7 +119,7 @@ C.RATE_SPLIT_CHANCE = 35
 local ui_metro
 local pits = {}
 local morph_on = false
-C.MORPH_SKIP = {morph = true, source = true, chunk = true, lseed = true, level = true}
+C.MORPH_SKIP = {morph = true, source = true, chunk = true, lseed = true, level = true, quality = true}
 
 local function morph_skip(id)
   return (C.MORPH_SKIP[id]
@@ -151,7 +151,7 @@ for i = 1, NV do
 end
 
 local UN = {ids = {}, np = 0, buf = {n = 0}, do_undo = nil, do_redo = nil}
-UN.skip = {source = true, morph = true, density = true}
+UN.skip = {source = true, morph = true, density = true, quality = true}
 
 local dirty = true
 local menu_was = false
@@ -173,6 +173,7 @@ do
   end
   Shuffle.init{
     vol_ids = vol_ids, tune_ids = tune_ids,
+    snap = function(x) return Dice.snap(x, params:get("chord")) end,
     count = function() return nva end,
     dirty = function() dirty = true end
   }
@@ -532,7 +533,7 @@ local function push_per_voice()
       vmr[i] = m
       eset_one(i, "mrate", m)
       eset_one(i, "prate", (frz or pr <= RATE_OFF) and 0 or clamp(pr * emod, 0.02, 12))
-      eset_one(i, "cutoff",   clamp(cut * 2 ^ (s.cut * var * 2.6), 90, LPF_OFF))
+      eset_one(i, "cutoff", cut >= LPF_OFF - 1 and LPF_OFF or clamp(cut * 2 ^ (s.cut * var * 2.6), 90, LPF_OFF))
       local db = clamp(lvl + ivol + trim + s.lvl * var * 7, -100, 6)
       if lvl <= -59.5 or ivol <= -59.5 then db = -100 end
       Sync.vbase[i] = db
@@ -2053,8 +2054,8 @@ local function dice()
     if rolls("voice") then
       for i = 1, NV do
         if not vlocked[i] then
-          params:set(PID[i].vol, Dice.rnd(-50, 5))
-          params:set(PID[i].tune, math.random(Shuffle.PITCH_LO, Shuffle.PITCH_HI))
+          params:set(PID[i].vol, Dice.rnd(-24, 3))
+          params:set(PID[i].tune, Shuffle.snap(math.random(Shuffle.PITCH_LO, Shuffle.PITCH_HI)))
         end
       end
     end
@@ -2125,7 +2126,7 @@ local function setup_params()
 
   params:add_separator(" ")
 
-  params:add_group("grains_main", "VOICES", 14)
+  params:add_group("grains_main", "VOICES", 15)
   params:add_control("level", "Level", controlspec.new(DB_FLOOR, C.LEVEL_MAX_DB, "lin", 0.5, -20, "dB"))
   params:add_number("density", "Density", 0, NV * NL, 0) params:set_action("density", function(v) if not layout_busy then local m = (DENSP or params:lookup_param("density")).max dfrac = m > 0 and clamp(v / m, 0, 1) or 0 end push_population() end)
   params:add_control("tuning", "Tuning", controlspec.new(-48, 48, "lin", 1, 0, "st"))
@@ -2150,6 +2151,7 @@ local function setup_params()
   params:add_control("panwidth", "Pan Width", controlspec.new(0, 100, "lin", 1, 90, "%"))
   params:add_control("ampfloor", "Level Floor", controlspec.new(0, 100, "lin", 1, 25, "%"))
   params:add_binary("freeze_all", "Freeze All", "toggle", 0) params:set_action("freeze_all", freeze_refresh)
+  params:add_option("quality", "Interpolation", {"cubic", "linear (eco)"}, 1) engopt("quality")
 
   params:add_group("grains_lfo", "LFO", 14)
   local function vlfo_apply()

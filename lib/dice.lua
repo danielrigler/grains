@@ -60,7 +60,7 @@ function D.snap(x, ci)
 end
 
 D.MOTION = {
-  {name = "glacial",  mr = {0.05, 2},  slew = {1.5, 9},
+  {name = "glacial",  mr = {0.05, 0.8},  slew = {1.5, 9},
    rev = {0, 0.1},    floor = {45, 95}},
   {name = "drifting", mr = {1, 2},   slew = {1.0, 4.0},
    rev = {0.05, 0.2}, floor = {20, 70}},
@@ -136,7 +136,7 @@ function D.pick_contrast(t, cur, gap)
   return cur
 end
 
-local ROOTS = {-48, -36, -24, -12, -12, -7, -5, 0, 0, 0, 0, 0, 5, 7, 12, 12, 24, 36, 48}
+local ROOTS = {-24, -12, -12, -7, -5, 0, 0, 0, 0, 0, 5, 7, 12, 12, 24}
 
 function D.tuning_rows(c)
   local decay = rnd(0.5, 2.4) / math.max(c.favor, 0.05)
