@@ -96,6 +96,10 @@ local s_b0, s_b1, s_volf, s_pitchf, s_frz, s_lck
 local s_sel, s_blink
 local lastlevel = -1
 local pending = false
+local WL, s_draw_to
+local wl_clr = true
+local WKW, WKL, WKS, WKF, CNL, CLVL, KIND, DL = {}, {}, {}, {}, {}, {}, {}, {}
+local ND = 0
 
 function M.set_count(n)
   n = clamp(floor(n or 0), 0, M.NMAX)
@@ -112,7 +116,8 @@ function M.set_count(n)
   local down = WALL_BOT - PITCH_CENTER_DY
   if down < PITCH_HALF_ROWS then PITCH_HALF_ROWS = down end
   RAILS = {}
-  for v = 1, M.NMAX do KNL[v] = -1 end
+  for v = 1, M.NMAX do KNL[v] = -1 WKW[v] = nil end
+  wl_clr = true
   M.CW, M.CH, M.WALL_ROWS = CW, CH, WALL_ROWS
   return true
 end
@@ -274,21 +279,30 @@ end
 
 local drawn = {}
 
-local function cell_wave(v)
-  local x, y0 = CX[v], CY[v]
-  local ym = y0 + WAVE_DY
+local function wl_drop(v)
+  if WKW[v] then
+    WKW[v] = false
+    ND = ND + 1
+    DL[ND] = v
+  end
+end
+
+local function cell_prep(v)
   local wf = s_wf[v]
   local ph = xfp[v]
-  local is_loaded = s_loaded[v]
+  KIND[v] = 0
   drawn[v] = false
-  if ph == nil and not (is_loaded and wf) then return end
+  if ph == nil and not (s_loaded[v] and wf) then
+    wl_drop(v)
+    return
+  end
   drawn[v] = true
   local live = s_on[v]
   local nl = live and (s_nl[v] or 1) or 0
   if nl > LMAX then nl = LMAX end
   local ls, le = s_ls[v], s_le[v]
   local cache = COV[v]
-  cover = cache
+  local chg = false
   if nl > 0 then
     local k0, k1, kok = KC0[v], KC1[v], KOK[v]
     local same = KNL[v] == nl
@@ -323,27 +337,103 @@ local function cell_wave(v)
         cache[i] = run
       end
       KNL[v] = nl
+      chg = true
     end
   elseif KNL[v] ~= 0 then
     for i = 0, CW - 1 do cache[i] = 0 end
     KNL[v] = 0
+    chg = true
   end
 
   local lvn = nl > 0 and nl or 1
+  local lvl
   if NCELL <= FULL_CELLS then
-    LVL = LVLS_FULL[lvn]
+    lvl = LVLS_FULL[lvn]
   elseif s_sel == v then
-    LVL = LVLS_SEL[lvn]
+    lvl = LVLS_SEL[lvn]
   else
-    LVL = LVLS_DIM[lvn]
+    lvl = LVLS_DIM[lvn]
   end
+  CLVL[v] = lvl
 
   if ph then
-    local w = xfw[v]
-    if w then draw_slide(w, x, y0, ym, xfx[v], xfy[v], nl) end
+    KIND[v] = nl + 2
+    wl_drop(v)
+  elseif not WL then
+    KIND[v] = 1
   else
-    draw_wave(wf, x, ym, 0, CW - 1, y0 + WALL_TOP, y0 + WALL_BOT, 0)
+    local sel = s_sel == v
+    local fz = (s_frz and s_frz[v]) and (s_blink and 2 or 1) or 0
+    if chg or WKW[v] ~= wf or WKL[v] ~= lvl or WKS[v] ~= sel or WKF[v] ~= fz then
+      WKW[v], WKL[v], WKS[v], WKF[v], CNL[v] = wf, lvl, sel, fz, nl
+      ND = ND + 1
+      DL[ND] = v
+    end
   end
+end
+
+local function cell_wave(v)
+  local y0 = CY[v]
+  LVL, cover = CLVL[v], COV[v]
+  draw_wave(s_wf[v], CX[v], y0 + WAVE_DY, 0, CW - 1, y0 + WALL_TOP, y0 + WALL_BOT, 0)
+end
+
+local function cell_slide(v)
+  local w = xfw[v]
+  if w == nil then return end
+  local y0 = CY[v]
+  LVL, cover = CLVL[v], COV[v]
+  draw_slide(w, CX[v], y0, y0 + WAVE_DY, xfx[v], xfy[v], KIND[v] - 2)
+end
+
+local function rails_caps(v, nl, is_sel, frz_v)
+  local x, y0 = CX[v], CY[v]
+  local k0, k1 = KC0[v], KC1[v]
+  local rd = rails(nl)
+  local rail_level = is_sel and 15 or 9
+  for L = 1, nl do
+    R(rail_level, x + k0[L], y0 + rd[L], k1[L] - k0[L] + 1, 1)
+  end
+  if frz_v and not s_blink then return end
+  local half = rd.half
+  local caph = half * 2 + 1
+  for L = 1, nl do
+    local ry = y0 + rd[L]
+    local e0, e1 = x + k0[L], x + k1[L]
+    R(END_LVL, e0, ry - half, 1, caph)
+    R(END_LVL, e1, ry - half, 1, caph)
+    if frz_v and e1 - e0 >= 2 then
+      R(END_LVL, e0 + 1, ry - half, 1, 1)
+      R(END_LVL, e0 + 1, ry + half, 1, 1)
+      R(END_LVL, e1 - 1, ry - half, 1, 1)
+      R(END_LVL, e1 - 1, ry + half, 1, 1)
+    end
+  end
+end
+
+local function wl_paint()
+  s_level(0)
+  if wl_clr then
+    wl_clr = false
+    s_rect(0, 0, 128, 64)
+  end
+  local h = WALL_ROWS
+  for k = 1, ND do
+    local v = DL[k]
+    s_rect(CX[v], CY[v] + WALL_TOP, CW, h)
+  end
+  s_fill()
+  for k = 1, ND do
+    local v = DL[k]
+    if WKW[v] then cell_wave(v) end
+  end
+  Bflush()
+  for k = 1, ND do
+    local v = DL[k]
+    local nl = CNL[v]
+    if WKW[v] and nl > 0 then rails_caps(v, nl, WKS[v], WKF[v] > 0) end
+  end
+  Rflush()
 end
 
 local function cell_over(v)
@@ -360,29 +450,12 @@ local function cell_over(v)
   local wall_level = is_sel and WALL or 7
 
   if xfp[v] == nil and live and nl > 0 then
+    if not WL then rails_caps(v, nl, is_sel, frz_v) end
     local k0, k1 = KC0[v], KC1[v]
     local pos = s_pos[v]
     local rd = rails(nl)
-    local rail_level = is_sel and 15 or 9
-    for L = 1, nl do
-      R(rail_level, x + k0[L], y0 + rd[L], k1[L] - k0[L] + 1, 1)
-    end
     local half = rd.half
     local caph = half * 2 + 1
-    if not frz_v or s_blink then
-      for L = 1, nl do
-        local ry = y0 + rd[L]
-        local e0, e1 = x + k0[L], x + k1[L]
-        R(END_LVL, e0, ry - half, 1, caph)
-        R(END_LVL, e1, ry - half, 1, caph)
-        if frz_v and e1 - e0 >= 2 then
-          R(END_LVL, e0 + 1, ry - half, 1, 1)
-          R(END_LVL, e0 + 1, ry + half, 1, 1)
-          R(END_LVL, e1 - 1, ry - half, 1, 1)
-          R(END_LVL, e1 - 1, ry + half, 1, 1)
-        end
-      end
-    end
     for L = 1, nl do
       local p = pos[L]
       if p then
@@ -452,7 +525,9 @@ function M.bind(S)
   s_b0, s_b1, s_volf, s_pitchf = S.b0, S.b1, S.volf, S.pitchf
   s_frz, s_lck = S.frz, S.lck
   s_level, s_rect, s_fill = screen.level, screen.rect, screen.fill
-  WIMG = nil
+  WIMG, WL = nil, nil
+  wl_clr = true
+  for v = 1, M.NMAX do WKW[v] = nil end
   if M.USE_IMG and screen.create_image and screen.draw_to and screen.display_image_region then
     local ok = pcall(function()
       local t = {}
@@ -467,9 +542,10 @@ function M.bind(S)
         t[l] = img
       end
       WIMG = t
+      WL = screen.create_image(128, 64)
     end)
-    if not ok then WIMG = nil end
-    s_img = screen.display_image_region
+    if not ok then WIMG, WL = nil, nil end
+    s_img, s_draw_to = screen.display_image_region, screen.draw_to
   end
 end
 
@@ -477,7 +553,23 @@ function M.draw(sel, blink)
   s_sel, s_blink = sel, blink
   lastlevel = -1
   pending = false
-  for v = 1, NCELL do cell_wave(v) end
+  ND = 0
+  for v = 1, NCELL do cell_prep(v) end
+  if WL then
+    if ND > 0 or wl_clr then
+      s_draw_to(WL, wl_paint)
+      lastlevel = -1
+    end
+    s_img(WL, 0, 0, 128, 64, 0, 0)
+    for v = 1, NCELL do
+      if KIND[v] > 1 then cell_slide(v) end
+    end
+  else
+    for v = 1, NCELL do
+      local k = KIND[v]
+      if k == 1 then cell_wave(v) elseif k > 1 then cell_slide(v) end
+    end
+  end
   Bflush()
   for v = 1, NCELL do cell_over(v) end
   Rflush()

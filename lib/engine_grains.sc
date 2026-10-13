@@ -335,7 +335,7 @@ Engine_grains : CroneEngine {
             if(actives[i] and: { buffers[i] !== silent }, {
                 nls[i].min(nlMax).do({ arg ly;
                     this.retire(voices[i][ly], 0.4);
-                    voices[i][ly] = Synth.head(pgv[i], loopDef, this.layerArgs(i, ly) ++ [\intro, 0.15]);
+                    voices[i][ly] = Synth.head(pgv[i], loopDef, this.layerArgs(i, ly) ++ [\i_intro, 0.15]);
                 });
             });
         });
@@ -547,76 +547,64 @@ Engine_grains : CroneEngine {
 
         [\grainsloop, \grainsloopeco].do({ arg defName, eco;
         SynthDef(defName, {
-            arg bus, buf, statebus = 0, posStart = 0, posEnd = 1, mrate = 1, prate = 1, gate = 1, rel = 1, rateSlew = 1.5, vrate = 1, weight1 = 14, weight2 = 8, weight3 = 3, weight4 = 6, weight5 = 4, lrate1 = 1, lrate2 = 0.5, lrate3 = 4, lrate4 = 2, lrate5 = 0.25, lamp1 = 1, lamp2 = 1.5849, lamp3 = 0.1259, lamp4 = 0.3981, lamp5 = 1.2589, revprob = 0.1, panwidth = 0.5, ampfloor = 0.25, kTune = 3, kDir = 6, kAmp = 4.5, kPan = 8, phAmp = 0, phPan = 0, lagAmp = 0.4, intro = 1;
+            arg bus, buf, statebus = 0, posStart = 0, posEnd = 1, mrate = 1, prate = 1, gate = 1, rel = 1, rateSlew = 1.5, vrate = 1, weight1 = 14, weight2 = 8, weight3 = 3, weight4 = 6, weight5 = 4, lrate1 = 1, lrate2 = 0.5, lrate3 = 4, lrate4 = 2, lrate5 = 0.25, lamp1 = 1, lamp2 = 1.5849, lamp3 = 0.1259, lamp4 = 0.3981, lamp5 = 1.2589, revprob = 0.1, panwidth = 0.5, ampfloor = 0.25, kTune = 3, kDir = 6, kAmp = 4.5, kPan = 8, phAmp = 0, phPan = 0, lagAmp = 0.4, i_intro = 1;
 
-            var frames, idx, tuneTrig;
-            var lfoRate, lfoAmp2, lfoForward, lfoAmp, lfoPan, rate, rateSign;
-            var pStart, pEnd, span, tiny, edge, use, spd, switch, pos1, pos2, snd1, snd2, posK, resetTo;
-            var snd, volume, boot;
-            var xfk, xfr, settled, outside, dirNow;
-            var xfTime, blk, chkRate = 25;
+            var frames, edge, edge2, use, span, pmax, emax, rscale;
+            var boot, idx, rate, amp2, lfoAmp, lfoPan, pStart, pEnd, sl, switch, nsw, resetTo;
+            var pos1, pos2, snd1, snd2, posK, xfr, settled, snd, volume;
 
             frames = BufFrames.kr(buf).max(4096);
+            span   = (frames * 0.04).min(2048);
+            edge   = (SampleRate.ir * 0.2).min(frames * 0.02).max((frames * 0.005).min(256));
+            edge2  = edge * 2;
+            use    = frames - edge2;
+            pmax   = frames - span - edge;
+            emax   = frames - edge;
+            rscale = BufRateScale.kr(buf);
 
             boot = Impulse.kr(0);
-            tuneTrig = boot + Dust.kr(prate / kTune);
-            idx = TWindex.kr(tuneTrig, [weight1, weight2, weight3, weight4, weight5], 1);
-            lfoRate = vrate * Select.kr(idx, [lrate1, lrate2, lrate3, lrate4, lrate5]);
-            lfoAmp2 = Select.kr(idx, [lamp1, lamp2, lamp3, lamp4, lamp5]);
+            idx  = TWindex.kr(boot + Dust.kr(prate / kTune), [weight1, weight2, weight3, weight4, weight5], 1);
+            rate = vrate * Select.kr(idx, [lrate1, lrate2, lrate3, lrate4, lrate5]);
+            amp2 = Select.kr(idx, [lamp1, lamp2, lamp3, lamp4, lamp5]);
+            rate = Lag.kr(rate * (TRand.kr(0, 1, Impulse.kr(mrate / kDir)) >= revprob).madd(2, -1), rateSlew) * rscale;
 
-            lfoForward = TRand.kr(0, 1, Impulse.kr(mrate / kDir)) >= revprob;
-            lfoAmp = SinOsc.kr(mrate / kAmp, phAmp).range(ampfloor.clip(0, 1), 1);
-            lfoPan = SinOsc.kr(mrate / kPan, phPan).range(-1, 1) * panwidth.clip(0, 1);
+            lfoAmp = SinOsc.kr(mrate / kAmp, phAmp, 1 - ampfloor, 1 + ampfloor);
+            lfoPan = SinOsc.kr(mrate / kPan, phPan, panwidth);
 
-            rateSign = (2 * lfoForward) - 1;
-            rate = Lag.kr(lfoRate * rateSign, rateSlew.max(0.001)) * BufRateScale.kr(buf);
+            pStart = Clip.kr(posStart.madd(use, edge), edge, pmax);
+            pEnd   = Clip.kr(posEnd.madd(use, edge), pStart + span, emax);
+            sl     = (rate.abs.max(0.05) * (SampleRate.ir * 4) / (pEnd - pStart).min(edge2)).clip(33.333333, 333.33333);
 
-            span    = (frames * 0.04).min(2048);
-            tiny    = (frames * 0.005).min(256);
-            edge    = ((SampleRate.ir * 0.2).min(frames * 0.02)).max(tiny);
-            use     = frames - edge - edge;
-            pStart  = Clip.kr(edge + (posStart * use), edge, frames - span - edge);
-            pEnd    = Clip.kr(edge + (posEnd * use), pStart + span, frames - edge);
-            spd     = rate.abs.max(0.05) * SampleRate.ir;
-            xfTime  = (((pEnd - pStart) * 0.25).min(edge * 0.5) / spd).clip(0.003, 0.03);
-
-            switch = ToggleFF.kr(LocalIn.kr(1));
-
-            dirNow  = rate > 0;
-            resetTo = pEnd + (dirNow * (pStart - pEnd));
+            switch  = ToggleFF.kr(LocalIn.kr(1));
+            nsw     = 1 - switch;
+            resetTo = Select.kr(rate > 0, [pEnd, pStart]);
 
             if(eco > 0, {
-                pos1 = Phasor.ar(1 - switch, rate, 0, frames, resetTo);
+                pos1 = Phasor.ar(nsw, rate, 0, frames, resetTo);
                 snd1 = BufRd.ar(1, buf, pos1, 1.0, 2);
                 pos2 = Phasor.ar(switch, rate, 0, frames, resetTo);
                 snd2 = BufRd.ar(1, buf, pos2, 1.0, 2);
                 posK = Select.kr(switch, [A2K.kr(pos1), A2K.kr(pos2)]);
             }, {
-                blk = rate * SampleRate.ir * ControlDur.ir;
-                pos1 = Phasor.kr(1 - switch, blk, 0, frames, resetTo);
-                snd1 = PlayBuf.ar(1, buf, rate, 1 - switch, resetTo, 1);
-                pos2 = Phasor.kr(switch, blk, 0, frames, resetTo);
+                pos1 = rate * (SampleRate.ir * ControlDur.ir);
+                pos2 = Phasor.kr(switch, pos1, 0, frames, resetTo);
+                pos1 = Phasor.kr(nsw, pos1, 0, frames, resetTo);
+                snd1 = PlayBuf.ar(1, buf, rate, nsw, resetTo, 1);
                 snd2 = PlayBuf.ar(1, buf, rate, switch, resetTo, 1);
                 posK = Select.kr(switch, [pos1, pos2]);
             });
 
-            xfr     = Slew.kr(switch, 1 / xfTime, 1 / xfTime);
-            xfk     = xfr * xfr * (3 - (2 * xfr));
+            xfr     = Slew.kr(switch, sl, sl);
             settled = (xfr - switch).abs < 1e-4;
-            outside = (posK > pEnd) + (posK < pStart);
+            LocalOut.kr((Impulse.kr(25) - boot) * (settled > InRange.kr(posK, pStart, pEnd)));
 
-            LocalOut.kr(Changed.kr(Stepper.kr(Impulse.kr(chkRate), 0, 0, 1000000000, outside * settled)));
+            snd = LinXFade2.ar(snd1, snd2, xfr.squared.madd(xfr.madd(-4, 6), -1));
 
-            snd = LinXFade2.ar(snd1, snd2, (xfk * 2) - 1);
-
-            volume = lfoAmp * EnvGen.kr(Env.new([0, 0.25, 1], [Rand(0.5, 2) * intro, Rand(1, 3) * intro], [4, -3]));
-            volume = volume * EnvGen.kr(Env.adsr(1, 1, 1, rel), gate + boot, doneAction: 2);
-            volume = volume * 2 * Lag.kr(lfoAmp2, lagAmp);
-
-            snd = Pan2.ar(snd, lfoPan, volume);
+            volume = lfoAmp * EnvGen.kr(Env.new([0, 0.25, 1], [Rand(0.5, 2) * i_intro, Rand(1, 3) * i_intro], [4, -3]))
+                * EnvGen.kr(Env.adsr(1, 1, 1, rel), gate + boot, doneAction: 2) * Lag.kr(amp2, lagAmp);
 
             Out.kr(statebus, ((posK - edge) / use).clip(0, 1));
-            Out.ar(bus, snd);
+            Out.ar(bus, Pan2.ar(snd, lfoPan, volume));
         }).add;
         });
 

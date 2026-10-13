@@ -25,6 +25,8 @@ local rq, pa, pb = {}, {}, {}
 local anchor, held, used = {}, {}, {}
 local modv
 local rep_d, rep_t, rep_k, rep_v
+local kl, kh, ka, kb, ke, bprev = {}, {}, {}, {}, {}, {}
+local backlog = true
 
 local tn = 0
 
@@ -72,6 +74,8 @@ end
 local function resize()
   W = (g and g.cols and g.cols > 0) and g.cols or 16
   for k = 1, W * DN do sent[k] = -99 end
+  kl, kh, ka, kb, ke, bprev = {}, {}, {}, {}, {}, {}
+  backlog = true
 end
 
 local function lvl(x)
@@ -92,8 +96,9 @@ function G.redraw()
   if g == nil or g.device == nil then return end
   local n, blink = cfg.count(), S.blink
   local k = 0
+  local dirty = backlog
   for i = 1, NVR do
-    local live = i <= n and S.files[i]
+    local live = (i <= n and S.files[i]) and true or false
     local hi = IDLE
     if S.on[i] then
       local x, q = (S.volf[i] or 0) * VQ, rq[i]
@@ -105,20 +110,26 @@ function G.redraw()
     local ma, mb = a - (pa[i] or a), b - (pb[i] or b)
     pa[i], pb[i] = a, b
     local eq = (ma > FAST or ma < -FAST or mb > FAST or mb < -FAST) and b - a >= 1 and 1 or EQ
-    for c = 0, W - 1 do
-      k = k + 1
-      local l = 0
-      if live then
-        local lo = a > c and a or c
-        local up = b < c + 1 and b or c + 1
-        local cov = up - lo
-        l = BG
-        if cov > 0 then
-          cov = floor(cov * eq + 0.5)
-          if cov > 0 or eq == EQ then l = BG + (hi - BG) * (cov < 1 and 1 or cov) / eq end
+    if live ~= kl[i] or hi ~= kh[i] or a ~= ka[i] or b ~= kb[i] or eq ~= ke[i] then
+      kl[i], kh[i], ka[i], kb[i], ke[i] = live, hi, a, b, eq
+      dirty = true
+      for c = 0, W - 1 do
+        k = k + 1
+        local l = 0
+        if live then
+          local lo = a > c and a or c
+          local up = b < c + 1 and b or c + 1
+          local cov = up - lo
+          l = BG
+          if cov > 0 then
+            cov = floor(cov * eq + 0.5)
+            if cov > 0 or eq == EQ then l = BG + (hi - BG) * (cov < 1 and 1 or cov) / eq end
+          end
         end
+        led[k] = l
       end
-      led[k] = l
+    else
+      k = k + W
     end
   end
   for c = 1, W do led[k + c], led[k + W + c] = 0, 0 end
@@ -138,6 +149,11 @@ function G.redraw()
     led[k + W] = S.lck[modv] and FX_HI or FX_LO
     led[k + W + W] = S.frz[modv] and FX_HI or FX_LO
   end
+  for j = k + 1, k + W + W do
+    local l = led[j]
+    if bprev[j] ~= l then bprev[j] = l dirty = true end
+  end
+  if not dirty then return end
   local N, nb, ns, last = W * DN, NBIG, NSMALL, nil
   for n = 0, N - 1 do
     local j = (scan + n) % N + 1
@@ -152,6 +168,7 @@ function G.redraw()
     end
   end
   if ns == 0 then scan = last % N end
+  backlog = nb == 0 or ns == 0
   if nb < NBIG or ns < NSMALL then g:refresh() end
 end
 
