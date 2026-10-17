@@ -1,7 +1,7 @@
 --
 --
 --
---          grains v0.17
+--          grains v0.18
 --           @dddstudio
 --
 --
@@ -119,7 +119,7 @@ C.RATE_SPLIT_CHANCE = 35
 local ui_metro
 local pits = {}
 local morph_on = false
-C.MORPH_SKIP = {morph = true, source = true, chunk = true, lseed = true, level = true, quality = true}
+C.MORPH_SKIP = {morph = true, source = true, chunk = true, lseed = true, level = true, quality = true, limiter = true}
 
 local function morph_skip(id)
   return (C.MORPH_SKIP[id]
@@ -151,7 +151,7 @@ for i = 1, NV do
 end
 
 local UN = {ids = {}, np = 0, buf = {n = 0}, do_undo = nil, do_redo = nil}
-UN.skip = {source = true, morph = true, density = true, quality = true}
+UN.skip = {source = true, morph = true, density = true, quality = true, limiter = true}
 
 local dirty = true
 local menu_was = false
@@ -2242,10 +2242,11 @@ local function setup_params()
   params:add_control("flutter_var", "Flutter Var", controlspec.new(0.1, 10, "lin", 0.01, 2, "Hz")) eng("flutter_var")
   pct("genloss_mix", "More Tape", 0)
 
-  params:add_group("grains_dimension", "STEREO", 3)
+  params:add_group("grains_dimension", "STEREO", 4)
   params:add_control("m_width", "Width", controlspec.new(0, 200, "lin", 1, 100, "%")) eng("m_width", 0.01)
   params:add_option("haas", "Haas Effect", {"off", "on"}, 1) engopt("haas")
   params:add_taper("rspeed", "Rotation", 0, 1, 0, 1, "Hz") eng("rspeed")
+  params:add_option("limiter", "Output Limiter", {"off", "on"}, 1) engopt("limiter")
 
   params:add_group("grains_chorus", "CHORUS", 4)
   pct("dimension_mix", "Dimension", 0)
