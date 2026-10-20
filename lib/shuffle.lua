@@ -6,11 +6,12 @@ M.PITCH_LO, M.PITCH_HI = -24, 24
 
 M.VOL_RATE = 3
 M.PITCH_RATE = 2.5
-M.GLIDE = 0.92
 M.VOL_SLACK = 76
 
 local floor, max, min, abs, sqrt, random =
   math.floor, math.max, math.min, math.abs, math.sqrt, math.random
+local GLIDE = 0.92
+local GK = sqrt(1 - GLIDE * GLIDE)
 local nvoices, mark = function() return 0 end, function() end
 local snapfn = nil
 
@@ -29,15 +30,13 @@ function E:kick(d)
   if n < 1 then return end
   local pos, vel, ids = self.pos, self.vel, self.ids
   local lo, hi, q, rate, sn = self.lo, self.hi, self.quant, self.rate, self.snap
-  local g = max(0, min(0.99, M.GLIDE))
-  local k = sqrt(1 - g * g)
   local sum = 0
   for i = 1, n do
     local cur = params:get(ids[i])
     local p = pos[i]
     if p == nil or abs((sn and sn(p) or floor(p / q + 0.5) * q) - cur) > 1e-6 then p = cur end
     pos[i] = p
-    vel[i] = (vel[i] or random() * 2 - 1) * g + (random() * 2 - 1) * k
+    vel[i] = (vel[i] or random() * 2 - 1) * GLIDE + (random() * 2 - 1) * GK
     sum = sum + vel[i]
   end
   local mean = self.level and sum / n or 0

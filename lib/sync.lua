@@ -41,8 +41,6 @@ local function div_beats(i)
   return d and d[1] or 1
 end
 
-S.div_beats = div_beats
-
 local function div_label(i)
   local d = DIV[i]
   return d and d[2] or "?"
@@ -92,10 +90,8 @@ function S.dly_refresh()
   dly_on = S.dly_synced()
   local t = dly_on and dly_time() or pv("d_time")
   if dly_sent ~= nil and abs(dly_sent - t) < 1e-6 then return end
-  if engine.d_time then
-    dly_sent = t
-    engine.d_time(t)
-  end
+  dly_sent = t
+  engine.d_time(t)
 end
 
 function S.dly_fmt()
@@ -107,7 +103,7 @@ end
 
 local mo = {
   v = 0, sent = nil, last = nil, catch = 0, was = false,
-  fp = 0, k = 0
+  fp = 0, k = 0, acc = 0, n = 0
 }
 
 local wkk, wa, wb = {}, {}, {}
@@ -221,8 +217,8 @@ local function mo_tick(dt)
     if on then mo_arm() else return end
   end
   if not on then return end
-  mo.acc = (mo.acc or 0) + dt
-  mo.n = (mo.n or 0) + 1
+  mo.acc = mo.acc + dt
+  mo.n = mo.n + 1
   if mo.n < WRITE_EVERY then return end
   mo.n = 0
   dt = mo.acc
@@ -297,7 +293,7 @@ local vhz, vbeats, vsync = 0.5, 1, false
 
 local function vnorm()
   if vdepth <= 0 then vndb = 0 return end
-  local a, m = vdepth * LK, nil
+  local a, m = vdepth * LK
   if vshape == 1 then
     local t, x = 1, a * a * 0.25
     m = 1
@@ -324,8 +320,6 @@ local function vrate()
   if vdiv < 1 then vdiv = 1 elseif vdiv > 5 then vdiv = 5 end
   S.vlagdirty = true
 end
-
-function S.vsynced() return vsync end
 
 function S.vfmt()
   local t = div_beats(pv("vlfo_div")) * beat_sec()
@@ -494,40 +488,9 @@ function S.vis()
   end
 end
 
-local DEPTH_STEP = 2
-
-function S.mo_depth_delta(d)
-  if d == 0 then return nil end
-  local on = S.mo_on()
-  local cur = on and pv("morph_depth") or 0
-  local want = min(max(cur + d * DEPTH_STEP, 0), 100)
-  if want <= 0 then
-    if not on then return "depth: off" end
-    params:set("morph_auto", 1)
-    params:set("morph_depth", 0)
-    return "depth: off"
-  end
-  params:set("morph_depth", want)
-  if not on then params:set("morph_auto", 2) end
-  return string.format("depth: %d%%", floor(want + 0.5))
-end
-
-function S.mo_freq_delta(d)
-  if d == 0 then return nil end
-  if S.mo_synced() then
-    params:delta("morph_div", -d)
-    return "rate: " .. div_label(pv("morph_div"))
-  end
-  params:delta("morph_rate", -d)
-  local t = pv("morph_rate")
-  return "rate: " .. ((t < 10) and string.format("%.2f s", t)
-                              or string.format("%d s", floor(t + 0.5)))
-end
-
 local last_bs = nil
 
 function S.tick(now)
-  now = now or util.time()
   local dt = mo.last and (now - mo.last) or 0
   mo.last = now
   if dt < 0 or dt > 0.5 then dt = 1 / CHZ end

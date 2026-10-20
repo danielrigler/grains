@@ -84,15 +84,11 @@ local function lvl(x)
   return floor(FX_LO + (FX_HI - FX_LO) * x + 0.5)
 end
 
-local function meter(u, d, v, bip)
-  if bip then
-    led[u], led[d] = lvl(v * 2 - 1), lvl(1 - v * 2)
-  else
-    led[u], led[d] = lvl(v * 2 - 1), lvl(v * 2)
-  end
+local function meter(u, d, v)
+  led[u], led[d] = lvl(v * 2 - 1), lvl(v * 2)
 end
 
-function G.redraw()
+local function redraw()
   if g == nil or g.device == nil then return end
   local n, blink = cfg.count(), S.blink
   local k = 0
@@ -135,8 +131,7 @@ function G.redraw()
   for c = 1, W do led[k + c], led[k + W + c] = 0, 0 end
   for c = 1, #FX do
     if c > W - 5 then break end
-    local f = FX[c]
-    meter(k + c, k + W + c, params:get_raw(f[1]), f[3])
+    meter(k + c, k + W + c, params:get_raw(FX[c][1]))
   end
   meter(k + W - 4, k + W + W - 4, cfg.lfofrac("rlfo"))
   meter(k + W - 3, k + W + W - 3, cfg.lfofrac("vlfo"))
@@ -155,8 +150,8 @@ function G.redraw()
   end
   if not dirty then return end
   local N, nb, ns, last = W * DN, NBIG, NSMALL, nil
-  for n = 0, N - 1 do
-    local j = (scan + n) % N + 1
+  for q = 0, N - 1 do
+    local j = (scan + q) % N + 1
     local d = led[j] - sent[j]
     if d < 0 then d = -d end
     local big = d >= BIG
@@ -205,7 +200,7 @@ local function act(x, d, tap, v)
   if x == W - 4 then return cfg.lfo(d, tap, "rlfo") end
   local f = FX[x]
   if d == 0 then
-    params:set_raw(f[1], f[3] and 0.5 or 0)
+    params:set_raw(f[1], 0)
   else
     nudge(f[1], d * (tap and STEP or REP))
   end
@@ -250,7 +245,7 @@ local function key(x, y, z)
       fx_key(x, y, z)
     end
   end
-  G.redraw()
+  redraw()
 end
 
 function G.held(i) return anchor[i] ~= nil end
@@ -261,7 +256,7 @@ function G.tick(now)
     toga_save()
   end
   if rep_k and now >= rep_t then act(rep_k % 32, rep_d, nil, rep_v) end
-  G.redraw()
+  redraw()
   sweep_on = not sweep_on
   if sweep_on and resend and g.device then
     sweep = sweep % (W * DN) + 1

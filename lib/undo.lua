@@ -50,13 +50,6 @@ function U.mark(kind)
   drop_redo()
 end
 
-function U.wrap(kind, f)
-  return function(...)
-    U.mark(kind)
-    return f(...)
-  end
-end
-
 local function step(from, nfrom, to, nto)
   local snap = from[nfrom]
   from[nfrom] = nil
@@ -91,7 +84,5 @@ function U.clear()
   drop_redo()
   last_kind, last_t = nil, 0
 end
-
-function U.depth() return nu, nr end
 
 return U

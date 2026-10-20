@@ -2,7 +2,6 @@ local M = {}
 
 M.RAW = 128
 M.NMAX = 6
-M.USE_IMG = true
 
 local floor, exp, abs, log, sqrt = math.floor, math.exp, math.abs, math.log, math.sqrt
 
@@ -363,7 +362,7 @@ local function cell_prep(v)
     KIND[v] = 1
   else
     local sel = s_sel == v
-    local fz = (s_frz and s_frz[v]) and (s_blink and 2 or 1) or 0
+    local fz = s_frz[v] and (s_blink and 2 or 1) or 0
     if chg or WKW[v] ~= wf or WKL[v] ~= lvl or WKS[v] ~= sel or WKF[v] ~= fz then
       WKW[v], WKL[v], WKS[v], WKF[v], CNL[v] = wf, lvl, sel, fz, nl
       ND = ND + 1
@@ -444,8 +443,8 @@ local function cell_over(v)
   local nl = live and (s_nl[v] or 1) or 0
   if nl > LMAX then nl = LMAX end
   local is_sel = s_sel == v
-  local frz_v = s_frz and s_frz[v]
-  local lck = s_lck and s_lck[v]
+  local frz_v = s_frz[v]
+  local lck = s_lck[v]
   local ytop, ybot = y0 + WALL_TOP, y0 + WALL_BOT
   local wall_level = is_sel and WALL or 7
 
@@ -506,7 +505,7 @@ local function cell_over(v)
 
     local ycenter = y0 + PITCH_CENTER_DY
     R(wall_level, xw1, ycenter, 1, 1)
-    local pf = clamp((s_pitchf and s_pitchf[v]) or 0, -1, 1)
+    local pf = clamp(s_pitchf[v] or 0, -1, 1)
     local hpit = floor(abs(pf) * PITCH_HALF_ROWS + 0.5)
     if hpit > 0 then
       if pf > 0 then
@@ -528,7 +527,7 @@ function M.bind(S)
   WIMG, WL = nil, nil
   wl_clr = true
   for v = 1, M.NMAX do WKW[v] = nil end
-  if M.USE_IMG and screen.create_image and screen.draw_to and screen.display_image_region then
+  if screen.create_image and screen.draw_to and screen.display_image_region then
     local ok = pcall(function()
       local t = {}
       for _, l in ipairs({WALL, 7}) do
@@ -669,7 +668,7 @@ function M.recpopup(title, sub, frac, note)
     screen.level(5)
     screen.move(x + 5, REC_Y + 21)
     screen.text(note)
-  elseif type(frac) == "table" then
+  elseif frac then
     for k = 1, 2 do
       local y = REC_Y + 12 + k * 4
       local fw = floor(clamp(frac[k] or 0, 0, 1) * bw + 0.5)
@@ -681,16 +680,6 @@ function M.recpopup(title, sub, frac, note)
         screen.rect(x + 5, y, fw, 3)
         screen.fill()
       end
-    end
-  elseif frac then
-    local fw = floor(clamp(frac, 0, 1) * bw + 0.5)
-    screen.level(2)
-    screen.rect(x + 5, REC_Y + 16, bw, 4)
-    screen.fill()
-    if fw > 0 then
-      screen.level(15)
-      screen.rect(x + 5, REC_Y + 16, fw, 4)
-      screen.fill()
     end
   end
   lastlevel = -1

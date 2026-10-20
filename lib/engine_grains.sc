@@ -19,7 +19,7 @@ Engine_grains : CroneEngine {
     var voiceBus, vfilt, vfg, vfTok, filtKeys, filtSet, stateMsg, vfDef, vfOn, loopDef = \grainsloop;
     var wobbleBuffer, glitchBuffer, bufSine;
     var eqLow = 0, eqMid = 0, eqHigh = 0, glRatio = 0, glMix = 1;
-    var vparams, gparams, nls, actives, wins, loadTok, loadDone, loadReq, loadBusy;
+    var vparams, gparams, nls, actives, wins, loadTok, loadReq, loadBusy;
     var recBuf, recSyn, recPath, recNorm = 0, recBegan, recOn = false, oRec, inL = 0, inR = 1;
     var fxTok, mainDef = \grainsmain, mainWidth = 1;
 
@@ -453,7 +453,6 @@ Engine_grains : CroneEngine {
         if(b.numFrames.isNil, { b.free; ^this.readFailed(i, token) });
         old = buffers[i];
         buffers[i] = b;
-        loadDone[i] = token;
         this.startVoice(i);
         if(old.notNil and: { old !== silent }, { fork { 2.5.wait; old.free } });
         nornsAddr.sendMsg(*(["/grains/waveform", i] ++ peaks ++ [start / sr]));
@@ -472,14 +471,12 @@ Engine_grains : CroneEngine {
 
         buffers[dst] = b;
         nls[dst] = ln;
-        loadDone[dst] = loadTok[dst];
         vparams[dst] = vparams[src].copy;
 
         actives[dst] = actives[src];
 
         buffers[src] = silent;
         nls[src] = 1;
-        loadDone[src] = loadTok[src];
         vparams[src] = Dictionary.new;
         actives[src] = false;
 
@@ -532,7 +529,6 @@ Engine_grains : CroneEngine {
         actives = Array.fill(nv, { false });
         wins = Array.fill(nv * nlMax * 2, { arg k; (k % 2) });
         loadTok = Array.fill(nv, { 0 });
-        loadDone = Array.fill(nv, { -1 });
         loadReq = Array.fill(nv, { nil });
         loadBusy = Array.fill(nv, { false });
 
@@ -919,12 +915,12 @@ Engine_grains : CroneEngine {
         }).add;
 
         [\grainsmain, \grainsmainlim].do({ arg defName, lim;
-        SynthDef(defName, { arg bus, out = 0, width = 1, ceiling = 0.95;
+        SynthDef(defName, { arg bus, out = 0, width = 1;
             var sig = In.ar(bus, 2), m, s;
             m = (sig[0] + sig[1]) * 0.5;
             s = (sig[0] - sig[1]) * 0.5 * width.clip(0, 2);
             sig = [m + s, m - s];
-            Out.ar(out, if(lim > 0, { Limiter.ar(sig, ceiling.clip(0.1, 1.0), 0.008) }, { sig }));
+            Out.ar(out, if(lim > 0, { Limiter.ar(sig, 0.95, 0.008) }, { sig }));
         }).add;
         });
 
@@ -986,22 +982,21 @@ Engine_grains : CroneEngine {
         this.addCommand("move", "ii", { arg msg; this.moveVoice(msg[1].asInteger, msg[2].asInteger); });
         this.addCommand("report_rate", "f", { arg msg; reportRate = msg[1]; if(reporter.notNil, { reporter.set(\rate, reportRate) }); });
         this.addCommand("report_geom", "ii", { arg msg; this.setGeom(msg[1].asInteger, msg[2].asInteger); });
-        this.addCommand(\d_time, "f", { arg msg; fxDelay.set(\delay, msg[1]) });
-        this.addCommand(\d_fb, "f", { arg msg; fxDelay.set(\fb_amt, msg[1]) });
-        this.addCommand(\d_hpf, "f", { arg msg; fxDelay.set(\dhpf, msg[1]) });
-        this.addCommand(\d_lpf, "f", { arg msg; fxDelay.set(\lpf, msg[1]) });
-        this.addCommand(\d_wrate, "f", { arg msg; fxDelay.set(\w_rate, msg[1]) });
-        this.addCommand(\d_stereo, "f", { arg msg; fxDelay.set(\stereo, msg[1]) });
-        this.addCommand(\d_duck, "f", { arg msg; fxDelay.set(\duck_amt, msg[1]) });
+        [
+            [fxDelay, \d_time, \delay, \d_fb, \fb_amt, \d_hpf, \dhpf, \d_lpf, \lpf, \d_wrate, \w_rate, \d_stereo, \stereo, \d_duck, \duck_amt],
+            [fxShimmer, \sh_oct, \shimmer_oct1, \sh_lowpass, \lowpass1, \sh_hipass, \hipass1, \sh_pitchv, \pitchv1, \sh_fb, \fb1, \sh_fbdelay, \fbDelay1, \sh_mod, \mod_mix],
+            [fxWobble, \wobble_amp, \wobble_amp, \wobble_rpm, \wobble_rpm, \flutter_amp, \flutter_amp, \flutter_freq, \flutter_freq, \flutter_var, \flutter_var],
+            [fxBitcrush, \bc_mod, \mod_mix, \bc_rate, \rate, \bc_bits, \bits],
+            [fxResonator, \reso_decay, \decay],
+            [fxWavefold, \wf_drive, \drive, \wf_sym, \sym],
+            [fxGlitch, \gl_min, \minLength, \gl_max, \maxLength, \gl_stutters, \maxStutters, \gl_rev, \reverse, \gl_pitch, \pitch, \gl_gate, \gate_amt, \gl_decay, \decay],
+            [fxRingmod, \ringmod_rate, \rate, \ringmod_sweep, \sweep],
+            [fxSpiral, \spiral_bpm, \bpm, \spiral_div, \div, \spiral_feedback, \feedback, \spiral_rise, \rise, \spiral_glide, \glide, \spiral_span, \span, \spiral_tone, \tone],
+            [fxSub, \sub_detune, \detune],
+            [fxVibe, \vibe_drift, \drift]
+        ].do({ arg row; var syn = row[0]; row.drop(1).pairsDo({ arg cmd, key; this.addCommand(cmd, "f", { arg msg; syn.set(key, msg[1]) }) }) });
         this.addCommand(\d_wdepth, "f", { arg msg; fxDelay.set(\w_depth, msg[1] / 100); });
         this.addCommand("d_mix", "f", { arg msg; fxDelay.set(\mix, msg[1]); this.fxRun(fxDelay, msg[1] > 0, 5.1); });
-        this.addCommand(\sh_oct, "f", { arg msg; fxShimmer.set(\shimmer_oct1, msg[1]) });
-        this.addCommand(\sh_lowpass, "f", { arg msg; fxShimmer.set(\lowpass1, msg[1]) });
-        this.addCommand(\sh_hipass, "f", { arg msg; fxShimmer.set(\hipass1, msg[1]) });
-        this.addCommand(\sh_pitchv, "f", { arg msg; fxShimmer.set(\pitchv1, msg[1]) });
-        this.addCommand(\sh_fb, "f", { arg msg; fxShimmer.set(\fb1, msg[1]) });
-        this.addCommand(\sh_fbdelay, "f", { arg msg; fxShimmer.set(\fbDelay1, msg[1]) });
-        this.addCommand(\sh_mod, "i", { arg msg; fxShimmer.set(\mod_mix, msg[1]); });
         this.addCommand("sh_mix", "f", { arg msg; fxShimmer.set(\mix, msg[1]); this.fxRun(fxShimmer, msg[1] > 0, 1.6); });
         this.addCommand("tilt", "f", { arg msg; fxTilt.set(\tilt, msg[1]); fxTilt.run(msg[1] != 0); });
         this.addCommand("dimension_mix", "f", { arg msg; fxDimension.set(\mix, msg[1]); fxDimension.run(msg[1] > 0); });
@@ -1010,49 +1005,20 @@ Engine_grains : CroneEngine {
         this.addCommand("eq_low", "f", { arg msg; eqLow = msg[1]; fxEq.set(\low, msg[1]); this.updateEq });
         this.addCommand("eq_mid", "f", { arg msg; eqMid = msg[1]; fxEq.set(\mid, msg[1]); this.updateEq });
         this.addCommand("eq_high", "f", { arg msg; eqHigh = msg[1]; fxEq.set(\high, msg[1]); this.updateEq });
-        this.addCommand("tape_mix", "f", { arg msg; if(fxTape.notNil, { fxTape.set(\mix, msg[1]); fxTape.run(msg[1] > 0) }) });
+        this.addCommand("tape_mix", "f", { arg msg; fxTape.run(msg[1] > 0) });
         this.addCommand("shaper_mix", "f", { arg msg; fxShaper.set(\mix, msg[1]); fxShaper.run(msg[1] > 0) });
         this.addCommand("wobble_mix", "f", { arg msg; fxWobble.set(\mix, msg[1]); this.fxRun(fxWobble, msg[1] > 0, 0.3) });
-        this.addCommand(\wobble_amp, "f", { arg msg; fxWobble.set(\wobble_amp, msg[1]) });
-        this.addCommand(\wobble_rpm, "f", { arg msg; fxWobble.set(\wobble_rpm, msg[1]) });
-        this.addCommand(\flutter_amp, "f", { arg msg; fxWobble.set(\flutter_amp, msg[1]) });
-        this.addCommand(\flutter_freq, "f", { arg msg; fxWobble.set(\flutter_freq, msg[1]) });
-        this.addCommand(\flutter_var, "f", { arg msg; fxWobble.set(\flutter_var, msg[1]) });
         this.addCommand("haas", "i", { arg msg; fxHaas.run(msg[1] > 0) });
         this.addCommand("rspeed", "f", { arg msg; fxRotate.set(\rspeed, msg[1]); fxRotate.run(msg[1] > 0) });
         this.addCommand("bc_mix", "f", { arg msg; fxBitcrush.set(\mix, msg[1]); fxBitcrush.run(msg[1] > 0) });
-        this.addCommand("bc_mod", "i", { arg msg; fxBitcrush.set(\mod_mix, msg[1]) });
-        this.addCommand(\bc_rate, "f", { arg msg; fxBitcrush.set(\rate, msg[1]) });
-        this.addCommand(\bc_bits, "f", { arg msg; fxBitcrush.set(\bits, msg[1]) });
         this.addCommand("reso_mix", "f", { arg msg; fxResonator.set(\mix, msg[1]); this.fxRun(fxResonator, msg[1] > 0, 5.1) });
-        this.addCommand(\reso_decay, "f", { arg msg; fxResonator.set(\decay, msg[1]) });
         this.addCommand("reso_freqs", "fffff", { arg msg; fxResonator.set(\f1, msg[1], \f2, msg[2], \f3, msg[3], \f4, msg[4], \f5, msg[5]) });
         this.addCommand("wf_mix", "f", { arg msg; fxWavefold.set(\mix, msg[1]); fxWavefold.run(msg[1] > 0) });
-        this.addCommand(\wf_drive, "f", { arg msg; fxWavefold.set(\drive, msg[1]) });
-        this.addCommand(\wf_sym, "f", { arg msg; fxWavefold.set(\sym, msg[1]) });
         this.addCommand("gl_ratio", "f", { arg msg; glRatio = msg[1]; fxGlitch.set(\glitch_ratio, msg[1]); this.updateGlitch });
         this.addCommand("gl_mix", "f", { arg msg; glMix = msg[1]; fxGlitch.set(\mix, msg[1]); this.updateGlitch });
-        this.addCommand(\gl_min, "f", { arg msg; fxGlitch.set(\minLength, msg[1]) });
-        this.addCommand(\gl_max, "f", { arg msg; fxGlitch.set(\maxLength, msg[1]) });
-        this.addCommand(\gl_stutters, "i", { arg msg; fxGlitch.set(\maxStutters, msg[1]) });
-        this.addCommand(\gl_rev, "f", { arg msg; fxGlitch.set(\reverse, msg[1]) });
-        this.addCommand(\gl_pitch, "f", { arg msg; fxGlitch.set(\pitch, msg[1]) });
-        this.addCommand(\gl_gate, "f", { arg msg; fxGlitch.set(\gate_amt, msg[1]) });
-        this.addCommand(\gl_decay, "f", { arg msg; fxGlitch.set(\decay, msg[1]) });
-        this.addCommand(\ringmod_rate, "f", { arg msg; fxRingmod.set(\rate, msg[1]) });
-        this.addCommand(\ringmod_sweep, "f", { arg msg; fxRingmod.set(\sweep, msg[1]) });
-        this.addCommand(\spiral_bpm, "f", { arg msg; fxSpiral.set(\bpm, msg[1]) });
-        this.addCommand(\spiral_div, "f", { arg msg; fxSpiral.set(\div, msg[1]) });
-        this.addCommand(\spiral_feedback, "f", { arg msg; fxSpiral.set(\feedback, msg[1]) });
-        this.addCommand(\spiral_rise, "f", { arg msg; fxSpiral.set(\rise, msg[1]) });
-        this.addCommand(\spiral_glide, "f", { arg msg; fxSpiral.set(\glide, msg[1]) });
-        this.addCommand(\spiral_span, "f", { arg msg; fxSpiral.set(\span, msg[1]) });
-        this.addCommand(\spiral_tone, "f", { arg msg; fxSpiral.set(\tone, msg[1]) });
-        this.addCommand(\sub_detune, "f", { arg msg; fxSub.set(\detune, msg[1]) });
         this.addCommand("ringmod_mix", "f", { arg msg; fxRingmod.set(\mix, msg[1]); fxRingmod.run(msg[1] > 0) });
         this.addCommand("stchorus_mix", "f", { arg msg; fxStChorus.set(\mix, msg[1]); fxStChorus.run(msg[1] > 0) });
         this.addCommand("vibe_mix", "f", { arg msg; fxVibe.set(\mix, msg[1]); fxVibe.run(msg[1] > 0) });
-        this.addCommand("vibe_drift", "f", { arg msg; fxVibe.set(\drift, msg[1]) });
         this.addCommand("spiral_mix", "f", { arg msg; fxSpiral.set(\mix, msg[1]); this.fxRun(fxSpiral, msg[1] > 0, 2.8) });
         this.addCommand("genloss_mix", "f", { arg msg; fxGenloss.set(\mix, msg[1]); fxGenloss.run(msg[1] > 0) });
         this.addCommand("sub_mix", "f", { arg msg; fxSub.set(\mix, msg[1]); fxSub.run(msg[1] > 0) });

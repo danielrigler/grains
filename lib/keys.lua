@@ -43,7 +43,7 @@ function K.press(n)
   K.state[n] = true
   for id in pairs(coarse_step) do coarse_acc[id] = 0 end
   local t = util.time()
-  gesture = {id = gesture_id(), press_time = t, fired = false}
+  gesture = {id = gesture_id(), fired = false}
   local c = combos[gesture.id]
   hold_act = c and c.long
   hold_due = hold_act and (t + longpress) or nil
@@ -62,12 +62,12 @@ function K.release(n)
   if id == "" then
     gesture = nil
   else
-    gesture = {id = id, press_time = g and g.press_time or util.time(), fired = true}
+    gesture = {id = id, fired = true}
   end
 end
 
 function K.tick(now)
-  if hold_due and (now or util.time()) >= hold_due then
+  if hold_due and now >= hold_due then
     hold_due = nil
     local g = gesture
     if g and not g.fired then

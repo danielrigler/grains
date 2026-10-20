@@ -30,13 +30,11 @@ local micro_font = {
 local micro_font_by_byte = {}
 for ch, glyph in pairs(micro_font) do micro_font_by_byte[ch:byte()] = glyph end
 
-local floor, min, max, abs, log = math.floor, math.min, math.max, math.abs, math.log
+local floor, max, abs, log = math.floor, math.max, math.abs, math.log
 
 local function plot_text(plot, x, y, text, level)
   local cursor_x = x
   local level_is_fn = type(level) == "function"
-  local col_levels = (not level_is_fn) and type(level) == "table" and level or nil
-  local col_last = col_levels and col_levels[#col_levels] or nil
   for i = 1, #text do
     local glyph = micro_font_by_byte[text:byte(i)]
     if glyph then
@@ -44,12 +42,8 @@ local function plot_text(plot, x, y, text, level)
       for row = 1, 3 do
         for col = 1, w do
           if glyph[row][col] == 1 then
-            local lvl
-            if level_is_fn then
-              lvl = level(row, col)
-            else
-              lvl = col_levels and (col_levels[col] or col_last) or level
-            end
+            local lvl = level
+            if level_is_fn then lvl = level(row, col) end
             plot(lvl or 1, cursor_x + col - 1, y + row - 1)
           end
         end
@@ -290,7 +284,6 @@ local function collect(level, x, y)
 end
 
 function font.tick(now)
-  now = now or util.time()
   if now - _last_update >= UPDATE_INTERVAL then
     _last_update = now
     _draw_now = now
