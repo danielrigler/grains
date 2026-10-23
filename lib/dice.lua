@@ -15,50 +15,6 @@ D.TUNING = {
   {name = "lydian",     set = {0, 2, 6, 7, 11},       favor = 1.00, spread = 0.75}
 }
 
-D.CHORDS = {
-  {name = "unison", set = {0}},
-  {name = "oct",    set = {0, 12}},
-  {name = "5th",    set = {0, 7}},
-  {name = "min",    set = {0, 3, 7}},
-  {name = "maj",    set = {0, 4, 7}},
-  {name = "min7",   set = {0, 3, 7, 10}},
-  {name = "maj9",   set = {0, 4, 7, 11, 14}},
-  {name = "sus",    set = {0, 5, 7}},
-  {name = "minpent",set = {0, 3, 5, 7, 10}},
-  {name = "whole",  set = {0, 2, 4, 6, 8, 10}}
-}
-
-D.CHORD_EXT = {}
-D.CHORD_NAMES = {}
-for ci, c in ipairs(D.CHORDS) do
-  local t = {}
-  for oct = -2, 2 do
-    for _, s in ipairs(c.set) do t[#t + 1] = s + oct * 12 end
-  end
-  table.sort(t)
-  local u, m = {}, 0
-  for i = 1, #t do
-    if t[i] ~= u[m] then m = m + 1 u[m] = t[i] end
-  end
-  D.CHORD_EXT[ci] = u
-  D.CHORD_NAMES[ci] = c.name
-end
-
-local SNAP_N = {}
-for ci = 1, #D.CHORD_EXT do SNAP_N[ci] = #D.CHORD_EXT[ci] end
-
-function D.snap(x, ci)
-  local t = D.CHORD_EXT[ci] or D.CHORD_EXT[1]
-  local lo, hi = 1, SNAP_N[ci] or #t
-  while lo < hi do
-    local mid = (lo + hi) >> 1
-    if t[mid] < x then lo = mid + 1 else hi = mid end
-  end
-  local a, b = t[lo], t[lo - 1]
-  if b and (x - b) <= (a - x) then return b end
-  return a
-end
-
 D.MOTION = {
   {name = "glacial",  mr = {0.05, 0.8},  slew = {1.5, 9},
    rev = {0, 0.1},    floor = {45, 95}},

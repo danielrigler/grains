@@ -13,17 +13,18 @@ A six-voice granular sample player for [monome norns](https://monome.org/docs/no
   </tr>
 </table>
 
-It loads or records up to six voices, each running several playback heads that drift and collide inside the boundaries you set. So a patch keeps moving on its own without ever repeating exactly - somewhere between a drone, a tape loop, and a chord that never quite settles. Tweak every parameter manually, or just use randomization. Really quick and fun way to explore soundscapes. Basically a happy accident machine. 
+Load or record up to six voices. Each voice runs several layers that drift and collide inside the section you set, so a patch keeps moving without ever repeating exactly. Somewhere between a drone, a tape loop and a chord that never quite settles. Shape it by hand or let randomize do the work. A happy accident machine.
 
-Included effects: reverb, delay, shimmer, chorus, tape, glitch, wavefolder, bitcrusher, resonator, and more. You can morph between two states manually or with LFOs and there's a seamless loop recorder. Everything is controllable from the norns keys and encoders, no extra hardware needed.
+Effects include reverb, delay, shimmer, chorus, tape, glitch, spiral, sub, wavefolder, bitcrusher, resonator and ring mod. You can morph between two states by hand or with an LFO, and there is a seamless loop recorder.
 
-It is under development, so things might change. :)
+Everything runs from the norns keys and encoders. A grid is optional.
 
-Inspired by and based on [Graintopia](https://github.com/schollz/graintopia).
+Still in development, so things might change. :)
 
 ## requires
 
-- norns (or norns shield)
+- norns or norns shield
+- grid (optional)
 
 ## install
 
@@ -33,38 +34,40 @@ From maiden:
 ;install https://github.com/danielrigler/grains
 ```
 
-Do not forget to restart. 
+Restart norns after installing or updating.
 
 ## controls
 
-**Start here:** `K1+E1` sets Density - how many layers are spread across the loaded voices. At zero you hear nothing.
-`K1+K2` fills the voices with random files from your audio folder. Or set a specific folder under `PARAMS > SOURCE`. 
+**Start here:** `K1+E1` sets Density, the number of layers spread across the loaded voices. At zero you hear nothing.
+`K1+K2` fills the voices with random files from your audio folder, or set a folder under `PARAMS > SOURCE`.
 
 **Encoders**
 
 | | |
 | --- | --- |
 | `E1` | Master Volume |
-| `E2` / `E3` | Set Boundaries (start / width) on the selected voice |
+| `E2` / `E3` | Section start / width of the selected voice |
 | `K1+E1` | Density |
 | `K1+E2` | Add/Remove Layers |
 | `K1+E3` | Add/Remove Voices |
 | `K1+K3+E1` | Tuning |
 | `K1+K3+E2` | Energy |
 | `K1+K3+E3` | Pitch Change |
+| `K1+K2+K3+E1` | Scale |
+| `K1+K2+K3+E2` / `E3` | Voice Spread / Layer Spread |
 | `K2+E1` | Shuffle Volumes |
 | `K2+E2` / `K2+E3` | Selected Volume / Other Volumes |
 | `K3+E1` | Shuffle Pitches |
 | `K3+E2` / `K3+E3` | Selected Pitch / Other Pitches |
 | `K1+K2+E1` | Tilt EQ |
 | `K1+K2+E2` / `K1+K2+E3` | HPF / LPF |
-| `K2+K3+E1/E2/E3` | Effect Mix |
+| `K2+K3+E1/E2/E3` | Reverb / Delay / Shimmer |
 
 **Keys**
 
 | | |
 | --- | --- |
-| `K2` / `K3` | Navigate Voices |
+| `K2` / `K3` | Select Voice |
 | `K1+K2` | Load Random Audio |
 | `K1+K3` | Randomize |
 | `K2+K3` | Lock Selected Voice |
@@ -74,13 +77,34 @@ Do not forget to restart.
 | `K3` hold | Record to New Voice |
 | `K1+K2` hold | Freeze Voice |
 | `K1+K3` hold | Freeze All |
+| `K2+K3` hold | Undo |
+| `K1+K2+K3` hold | Redo |
 
+**Grid**
+
+| | |
+| --- | --- |
+| rows 1-6 | voices: press to move the section, hold + press to set it |
+| rows 7-8 | up / down per column |
+| columns 1-11 | reverb, delay, shimmer, dimension, chorus, vibe, wobble, crush, spiral, sub, glitch |
+| columns 12-16 | region LFO, volume LFO, reseed / randomize, volume, density |
+
+Press both keys of a column to reset it.
+
+## pitch
+
+Pitch is relative to the source audio.
+All voices and layers move in steps of the selected **Scale**.
+**Voice Spread** sets how far apart the voices are, **Layer Spread** how wide the intervals between layers are.
+
+To keep the original pitch, turn on **Original Pitch** under `PARAMS > VOICES`.
 
 ## notes
 
-Voices take fewer layers each as you load more files (14 for one voice, 10 for two voices, 6 for three, 5 for four, 4 for five and six).
-Long files are sliced: *Slice Length* under SOURCE decides how much is taken, from a random position in the file.
-Loop recording saves a seamless loop to `dust/audio/grains/`.
+- The more voices you load, the fewer layers each one gets: 14, 10, 6, 5, 4, 4.
+- Long files are sliced. *Slice Length* under `SOURCE` sets how much is taken, from a random position.
+- Recordings and loops are saved to `dust/audio/grains/`.
+- Locked voices are kept when you randomize. While a voice is locked, Randomize keeps the key too.
 
 ## credits
 

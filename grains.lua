@@ -1,7 +1,7 @@
 --
 --
 --
---          grains v0.18
+--          grains v0.19
 --           @dddstudio
 --
 --
@@ -26,6 +26,9 @@
 -- K1+K3+E1 Tuning
 -- K1+K3+E2 Energy
 -- K1+K3+E3 Pitch Change
+-- K1+K2+K3+E1 Scale
+-- K1+K2+K3+E2 Voice Spread
+-- K1+K2+K3+E3 Layer Spread
 -- K1+K2+K3 Reseed Voices
 -- K2+K3+E1/E2/E3 Effect Mix
 -- K1+K2+E1 Tilt EQ
@@ -69,6 +72,7 @@ local Morph   = include("grains/lib/morph")
 local Sync    = include("grains/lib/sync")
 local Shuffle = include("grains/lib/shuffle")
 local Reso    = include("grains/lib/reso")
+local Scale   = include("grains/lib/scale")
 local Keys    = include("grains/lib/keys")
 local Undo    = include("grains/lib/undo")
 local Grid    = include("grains/lib/gridui")
@@ -167,7 +171,8 @@ do
   end
   Shuffle.init{
     vol_ids = vol_ids, tune_ids = tune_ids,
-    snap = function(x) return Dice.snap(x, params:get("chord")) end,
+    snap = function(x) return Scale.snap(x, params:get("scale")) end,
+    move = function(x, d) return Scale.move(x, d, params:get("scale")) end,
     count = function() return nva end,
     dirty = function() dirty = true end
   }
@@ -315,28 +320,34 @@ local function eset_one(i, key, val, eps)
   engine.set_one(i - 1, key, val)
 end
 
-local TUNE = {spread_st = 24, lspread = 1, lrates = {}}
+local TUNE = {SPREAD = 0.02, LR = {}, MD = {}, orig = false}
 
 function TUNE.ratio(st) return 2 ^ (st / 12) end
 function TUNE.amp(db) return 10 ^ (db / 20) end
-function TUNE.layer(st) return TUNE.ratio(floor(st * TUNE.lspread + 0.5)) end
+function TUNE.key_fx()
+  Reso.update()
+  local f = Scale.fifth(params:get("scale"))
+  if f == TUNE.fifth then return end
+  TUNE.fifth = f
+  engine.gl_ratios(0.5, f and 0.7491535 or 0.5, f and 1.4983071 or 2, 2)
+end
+TUNE.SPIRAL = {{0.5, "oct down"}, {2 / 3, "5th down"}, {0.75, "4th down"}, {1, "unison"}, {4 / 3, "4th up"}, {1.5, "5th up"}, {2, "oct up"}}
+function TUNE.spiral(v) return TUNE.SPIRAL[floor((v + 100) * 0.03 + 0.5) + 1] end
 
 local VOICE_PARAMS = {
-  {"revprob",  "reverse",  function(v) return v * 0.01 end},
+  {"revprob",  "reverse",  function(v) return TUNE.orig and 0 or v * 0.01 end},
   {"rateSlew", "rateslew"},
   {"panwidth", "panwidth", function(v) return v * 0.01 end},
   {"res",      "res",      function(v) return (100 - v) * 0.007 end},
   {"hpf",      "vhpf"}
 }
+local SCALARS = {"tuning", "scale", "spread", "variance", "motionrate", "pitchrate", "cutoff", "ampfloor"}
 for i = 1, 5 do
-  local lr = {"lrate" .. i, "mididiff" .. i, TUNE.layer}
   VOICE_PARAMS[#VOICE_PARAMS + 1] = {"weight" .. i, "weight" .. i}
-  VOICE_PARAMS[#VOICE_PARAMS + 1] = lr
   VOICE_PARAMS[#VOICE_PARAMS + 1] = {"lamp" .. i, "vdb" .. i, TUNE.amp}
-  TUNE.lrates[i] = lr
+  TUNE.LR[i], TUNE.MD[i] = "lrate" .. i, "mididiff" .. i
+  SCALARS[#SCALARS + 1] = TUNE.MD[i]
 end
-
-local SCALARS = {"tuning", "chord", "spread", "variance", "motionrate", "pitchrate", "cutoff", "ampfloor"}
 local G = {}
 local DENSP
 local DICE_GLOBALS, DICE_SET = {table.unpack(SCALARS)}, {}
@@ -369,11 +380,6 @@ end
 
 local function push_voice_params()
   for _, p in ipairs(VOICE_PARAMS) do push_one(p) end
-end
-
-function TUNE.set_layer_spread(pct)
-  TUNE.lspread = pct * 0.01
-  for _, p in ipairs(TUNE.lrates) do push_one(p) end
 end
 
 local function drop_shadows()
@@ -481,8 +487,10 @@ local function push_per_voice()
   dirty = true
   local gvar    = G.variance * 0.01
   local groot   = G.tuning
-  local gspread = G.spread * TUNE.spread_st * 0.01
-  local gchord  = G.chord
+  local gspread = G.spread * TUNE.SPREAD
+  local gscale  = G.scale
+  local lsp     = G.lspread * 0.01
+  local MD, LR, ratio, pitch, srnd = TUNE.MD, TUNE.LR, TUNE.ratio, Scale.pitch, Scale.round
   local gmr     = G.motionrate
   local gpr     = G.pitchrate
   local gcut    = G.cutoff
@@ -496,25 +504,36 @@ local function push_per_voice()
     local vf = vol_frac(ivol, Shuffle.VOL_MAX_DB)
     S.volb[i] = vf
     if not Sync.von or S.volf[i] == nil then S.volf[i] = vf end
-    S.pitchf[i] = clamp(itune / Shuffle.PITCH_HI, -1, 1)
+    S.pitchf[i] = TUNE.orig and 0 or clamp(itune / Shuffle.PITCH_HI, -1, 1)
     if s then
       local frz = vfrozen[i]
 
-      local var, root, spread, chord, mr, pr, cut, flr =
-            gvar, groot, gspread, gchord, gmr, gpr, gcut, gflr
+      local var, root, spread, sc, mr, pr, cut, flr =
+            gvar, groot, gspread, gscale, gmr, gpr, gcut, gflr
       local h = ovr[i]
       if h then
         if h.variance   then var    = h.variance / 100 end
         if h.tuning     then root   = h.tuning         end
-        if h.spread     then spread = h.spread * TUNE.spread_st / 100 end
-        if h.chord      then chord  = h.chord          end
+        if h.spread     then spread = h.spread * TUNE.SPREAD end
+        if h.scale      then sc     = h.scale          end
         if h.motionrate then mr     = h.motionrate     end
         if h.pitchrate  then pr     = h.pitchrate      end
         if h.cutoff     then cut    = h.cutoff         end
         if h.ampfloor   then flr    = h.ampfloor / 100 end
       end
 
-      eset_one(i, "vrate", TUNE.ratio(root + Dice.snap(s.tune * spread, chord) + itune))
+      if TUNE.orig then
+        eset_one(i, "vrate", 1)
+        for k = 1, 5 do eset_one(i, LR[k], 1) end
+      else
+        local deg = srnd(s.tune * spread * Scale.size(sc)) + Scale.near(itune, sc)
+        local vst = pitch(deg, sc)
+        eset_one(i, "vrate", ratio(root + vst))
+        for k = 1, 5 do
+          local md = h and h[MD[k]] or G[MD[k]]
+          eset_one(i, LR[k], ratio(pitch(deg + srnd(Scale.steps(md, sc) * lsp), sc) - vst))
+        end
+      end
 
       local emod = 2 ^ (s.mr * var * 1.3)
       local m = (frz or mr <= RATE_OFF) and 0 or clamp(mr * emod, 0.02, 12)
@@ -759,6 +778,7 @@ local function flush_population()
     if S.on[i] ~= on then
       S.on[i] = on
       Sync.vdirty = true
+      if on and voices_dirty then push_per_voice() end
       engine.active(i - 1, on and 1 or 0)
       if on then
         local lw = last_win[i]
@@ -1960,8 +1980,10 @@ local DICE = {
       params:set("weight" .. i, rows[i].weight)
       params:set("vdb" .. i, rows[i].db)
     end
-    params:set("tuning", Dice.roll_root())
-    params:set("chord", math.random(#Dice.CHORDS))
+    if locked_count() == 0 then
+      params:set("tuning", Dice.roll_root())
+      params:set("scale", math.random(Scale.CHROMATIC - 1))
+    end
     params:set("spread", Dice.rnd(15, 100) * c.spread)
   end,
   motion = function()
@@ -2027,13 +2049,13 @@ local function dice()
     ovr_capture()
     dicing = true
     for _, k in ipairs({"tune", "motion", "space", "shape"}) do
-      if rolls(k) then DICE[k]() end
+      if rolls(k) and not (k == "tune" and TUNE.orig) then DICE[k]() end
     end
     if rolls("voice") then
       for i = 1, NV do
         if not vlocked[i] then
           params:set(PID[i].vol, Dice.rnd(-24, 3))
-          params:set(PID[i].tune, Shuffle.snap(math.random(Shuffle.PITCH_LO, Shuffle.PITCH_HI)))
+          if not TUNE.orig then params:set(PID[i].tune, Shuffle.snap(math.random(Shuffle.PITCH_LO, Shuffle.PITCH_HI))) end
         end
       end
     end
@@ -2044,7 +2066,7 @@ end
 
 local function setup_params()
 
-  local HIDDEN = {"grains_tune", "grains_reverb", "reverb_mix", "level", "chord", "lseed", "morph_seed", "grains_hold"}
+  local HIDDEN = {"grains_tune", "grains_reverb", "reverb_mix", "level", "lseed", "morph_seed", "grains_hold"}
   local SLOT_CHARS = 24
 
   local esent = {}
@@ -2100,14 +2122,18 @@ local function setup_params()
 
   params:add_separator(" ")
 
-  params:add_group("grains_main", "VOICES", 15)
+  params:add_group("grains_main", "VOICES", 16)
   params:add_control("level", "Level", controlspec.new(DB_FLOOR, C.LEVEL_MAX_DB, "lin", 0.5, -20, "dB"))
   params:add_number("density", "Density", 0, NV * NL, 0) params:set_action("density", function(v) if not layout_busy then local m = DENSP.max dfrac = m > 0 and clamp(v / m, 0, 1) or 0 end push_population() end)
+  params:add_binary("pitch_lock", "Original Pitch", "toggle", 0) params:set_action("pitch_lock", function(v)
+    TUNE.orig = v == 1
+    push_one(VOICE_PARAMS[1])
+    push_voices()
+  end)
   params:add_control("tuning", "Tuning", controlspec.new(-48, 48, "lin", 1, 0, "st"))
+  params:add_option("scale", "Scale", Scale.NAMES, Scale.DEFAULT)
   params:add_control("spread", "Voice Spread", controlspec.new(0, 100, "lin", 1, 75, "%"))
-  params:add_option("chord", "Chord", Dice.CHORD_NAMES, 6)
   params:add_control("lspread", "Layer Spread", controlspec.new(0, 200, "lin", 1, 100, "%"))
-  params:set_action("lspread", TUNE.set_layer_spread)
   params:add_control("variance", "Voice Variance", controlspec.new(0, 100, "lin", 1, 50, "%"))
   params:add_control("motionrate", "Energy", controlspec.new(0.05, 8, "exp", 0, 1, "x"))
   params:add_control("pitchrate", "Pitch Change", controlspec.new(0.05, 8, "exp", 0, 1, "x"))
@@ -2256,8 +2282,8 @@ local function setup_params()
     Reso.update()
   end)
   params:add_control("reso_decay", "Decay", controlspec.new(0.01, 5, "exp", 0, 2, "s")) eng("reso_decay")
-  params:add_number("reso_root", "Root", 24, 128, 28, function(p) return MusicUtil.note_num_to_name(p:get(), true) end) params:set_action("reso_root", Reso.update)
-  params:add_option("reso_voicing", "Voicing", Reso.NAMES, 2) params:set_action("reso_voicing", function(v) Reso.voicing(v) Reso.update() end)
+  params:add_number("reso_root", "Root", 24, 128, 28, function() return MusicUtil.note_num_to_name(floor(Reso.root()), true) end) params:set_action("reso_root", Reso.update)
+  params:add_option("reso_voicing", "Voicing", Reso.NAMES, Reso.SCALE) params:set_action("reso_voicing", function(v) Reso.voicing(v) Reso.update() end)
 
   params:add_group("grains_ringmod", "RINGMOD", 3)
   pct("ringmod_mix", "Mix", 0)
@@ -2268,7 +2294,9 @@ local function setup_params()
   pct("spiral_mix", "Mix", 0)
   params:add_option("spiral_div", "Division", {"1/32", "1/16T", "1/16", "1/8T", "1/8", "1/8.", "1/4", "1/4."}, 5) params:set_action("spiral_div", function(v) engine.spiral_bpm(clock.get_tempo()) engine.spiral_div(({0.125, 1/6, 0.25, 1/3, 0.5, 0.75, 1, 1.5})[v]) end)
   pct("spiral_feedback", "Feedback", 50)
-  params:add_control("spiral_rise", "Rise", controlspec.new(-100, 100, "lin", 1, 50, "%")) params:set_action("spiral_rise", function(v) engine.spiral_rise((v * 0.01 + 1) * 0.5) end)
+  params:add_control("spiral_rise", "Rise", controlspec.new(-100, 100, "lin", 1, 50, "%"))
+  params:lookup_param("spiral_rise").string = function(p) return TUNE.spiral(p:get())[2] end
+  params:set_action("spiral_rise", function(v) local r = TUNE.spiral(v)[1] engine.spiral_rise(r >= 1 and r * 0.5 or r - 0.5) end)
   pct("spiral_glide", "Glide", 0)
   pct("spiral_span", "Span", 50)
   pct("spiral_tone", "Tone", 50)
@@ -2399,16 +2427,20 @@ local function setup_params()
     end)
   end
 
-  local function scalar_action(id)
+  local function scalar_action(id, post)
     params:set_action(id, function(v)
       G[id] = v
       if not dicing then ovr_clear(id) end
       push_voices()
+      if post then post() end
     end)
     G[id] = params:get(id)
   end
   scalar_action("level")
+  scalar_action("lspread")
   for _, id in ipairs(SCALARS) do scalar_action(id) end
+  scalar_action("tuning", Reso.update)
+  scalar_action("scale", TUNE.key_fx)
 
   DENSP = params:lookup_param("density")
   for i = 1, NV do
@@ -2542,6 +2574,10 @@ local function pop_show(kind, txt)
   dirty = true
 end
 
+local function orig_block()
+  if TUNE.orig then pop_show("fx", "original pitch") return true end
+end
+
 function src.nudge_count(step)
   local cur = count_files()
   if cur < 1 and step < 0 then return end
@@ -2618,6 +2654,19 @@ function enc(n, d)
     local v = params:get(fx[1])
     pop_show("fx", fx[2] .. ": " .. (n == 1 and fast_db(v) or string.format("%d%%", floor(v + 0.5))))
 
+  elseif k1 and k2 and k3 then
+    if orig_block() then return end
+    Undo.mark("pitch_rel")
+    if n == 1 then
+      local step = coarse("scale", d)
+      if step ~= 0 then params:set("scale", clamp(params:get("scale") + step, 1, Scale.CHROMATIC)) end
+      pop_show("fx", "scale: " .. Scale.NAMES[params:get("scale")])
+    else
+      local id = n == 2 and "spread" or "lspread"
+      params:delta(id, d)
+      pop_show("fx", string.format("%s spread: %d%%", n == 2 and "voice" or "layer", floor(params:get(id) + 0.5)))
+    end
+
   elseif k1 and k2 and not k3 then
     if n == 1 then
       params:delta("tilt", d)
@@ -2635,11 +2684,12 @@ function enc(n, d)
     Shuffle.vol:kick(d)
 
   elseif not k1 and not k2 and k3 and n == 1 then
+    if orig_block() then return end
     Undo.mark("shuffle_pitch")
     Shuffle.pitch:kick(d)
 
   elseif not k1 and (k2 or k3) then
-    if sel < 1 then return end
+    if sel < 1 or (k3 and orig_block()) then return end
     Undo.mark(k2 and "nudge_vol" or "nudge_pitch")
     local sh = k2 and Shuffle.vol or Shuffle.pitch
     if n == 2 then
@@ -2652,8 +2702,9 @@ function enc(n, d)
 
   elseif k1 then
     if n == 1 and k3 then
+      if orig_block() then return end
       params:set("tuning", params:get("tuning") + d)
-      pop_show("fx", string.format("tuning: %+.0f st", params:get("tuning")))
+      pop_show("fx", string.format("tuning: %+d st", floor(params:get("tuning"))))
     elseif n == 1 then
       local step = coarse("density", d)
       if step ~= 0 then params:delta("density", step) end
@@ -2722,7 +2773,7 @@ function init()
   setup_osc()
   Sync.set_rate(CTRL_HZ)
   Keys.init{combos = C.KEY_COMBOS, longpress = C.LONGPRESS,
-            coarse = {density = 5, layers = 5, voices = 5}}
+            coarse = {density = 5, layers = 5, voices = 5, scale = 4}}
   params:set("lseed", math.random(9999))
   params:set("morph_seed", math.random(9999))
   params:bang()

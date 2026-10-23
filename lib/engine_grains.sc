@@ -788,7 +788,7 @@ Engine_grains : CroneEngine {
         }).add;
 
         SynthDef(\grainsglitch, {
-            arg bus, glitch_ratio = 0.0, mix = 1, minLength = 0.075, maxLength = 0.2, reverse = 0, pitch = 0, maxStutters = 5, gate_amt = 1, decay = 0, flush = 0;
+            arg bus, glitch_ratio = 0.0, mix = 1, minLength = 0.075, maxLength = 0.2, reverse = 0, pitch = 0, maxStutters = 5, gate_amt = 1, decay = 0, flush = 0, r1 = 0.5, r2 = 0.7491535, r3 = 1.4983071, r4 = 2;
             var sig, sr, frames, busy, rest, writePos, idle, cool, trig, len, start, ps, dur, on, el, t, rel, pos, fade, env, wet;
             sig = In.ar(bus, 2);
             sr = SampleRate.ir;
@@ -801,7 +801,7 @@ Engine_grains : CroneEngine {
             trig = Dust.kr((idle - cool).reciprocal) * (1 - rest) * (1 - busy);
             len = TRand.kr(minLength, maxLength, trig) * sr;
             start = (Latch.kr(writePos, trig) - len).wrap(0, frames);
-            ps = Select.kr(TRand.kr(0, 1, trig) < pitch, [1, Select.kr(TIRand.kr(0, 3, trig), [0.707, 0.841, 1.189, 1.414])]);
+            ps = Select.kr(TRand.kr(0, 1, trig) < pitch, [1, Select.kr(TIRand.kr(0, 3, trig), [r1, r2, r3, r4])]);
             dur = (TIRand.kr(2, maxStutters, trig) * len / ps).min(frames - len - (sr * 0.02)) / sr;
             on = Trig1.kr(trig, dur);
             el = Sweep.kr(trig, 1);
@@ -1015,6 +1015,7 @@ Engine_grains : CroneEngine {
         this.addCommand("reso_freqs", "fffff", { arg msg; fxResonator.set(\f1, msg[1], \f2, msg[2], \f3, msg[3], \f4, msg[4], \f5, msg[5]) });
         this.addCommand("wf_mix", "f", { arg msg; fxWavefold.set(\mix, msg[1]); fxWavefold.run(msg[1] > 0) });
         this.addCommand("gl_ratio", "f", { arg msg; glRatio = msg[1]; fxGlitch.set(\glitch_ratio, msg[1]); this.updateGlitch });
+        this.addCommand("gl_ratios", "ffff", { arg msg; fxGlitch.set(\r1, msg[1], \r2, msg[2], \r3, msg[3], \r4, msg[4]) });
         this.addCommand("gl_mix", "f", { arg msg; glMix = msg[1]; fxGlitch.set(\mix, msg[1]); this.updateGlitch });
         this.addCommand("ringmod_mix", "f", { arg msg; fxRingmod.set(\mix, msg[1]); fxRingmod.run(msg[1] > 0) });
         this.addCommand("stchorus_mix", "f", { arg msg; fxStChorus.set(\mix, msg[1]); fxStChorus.run(msg[1] > 0) });

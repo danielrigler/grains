@@ -51,6 +51,13 @@ function E:kick(d)
 end
 
 function E:nudge(i, d)
+  if self.move then
+    local id = self.ids[i]
+    local v = self.move(params:get(id), d)
+    params:set(id, max(self.lo, min(self.hi, v)))
+    mark()
+    return
+  end
   local ids, sh, at = self.ids, self.shadow, self.at
   local lo, hi, k = self.emin, self.emax, self.slack
   local n = nvoices()
@@ -89,7 +96,7 @@ function M.init(cfg)
   }, E)
   M.pitch = setmetatable({
     ids = cfg.tune_ids, rate = M.PITCH_RATE,
-    lo = M.PITCH_LO, hi = M.PITCH_HI, quant = 1, snap = M.snap,
+    lo = M.PITCH_LO, hi = M.PITCH_HI, quant = 1, snap = M.snap, move = cfg.move,
     emin = M.PITCH_LO, emax = M.PITCH_HI, slack = 0,
     pos = {}, vel = {}, shadow = {}, at = {}
   }, E)
