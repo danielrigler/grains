@@ -16,7 +16,7 @@ Engine_grains : CroneEngine {
     var busMain, busDly, fxMain, fxDelay, fxShimmer, fxTilt, fxDimension;
     var fxEq, fxTape, fxShaper, fxWobble, fxBitcrush, fxWavefold;
     var fxResonator, fxGlitch, fxHaas, fxRotate, fxRingmod, fxStChorus, fxVibe, fxSpiral, fxGenloss, fxSub, fxReel, fxOtt, fxVerb, spiralBuffer;
-    var voiceBus, vfilt, vfg, vfTok, filtKeys, filtSet, stateMsg, vfDef, vfOn, loopDef = \grainsloop;
+    var voiceBus, vfilt, vfg, vfTok, filtKeys, filtSet, stateMsg, vfDef, vfOn, loopDef = \grainsloop, lq = 0, lb = 0;
     var wobbleBuffer, glitchBuffer, bufSine;
     var eqLow = 0, eqMid = 0, eqHigh = 0, glRatio = 0, glMix = 1;
     var vparams, gparams, nls, actives, wins, loadTok, loadReq, loadBusy;
@@ -331,8 +331,8 @@ Engine_grains : CroneEngine {
         voices[i][ly] = Synth.head(pgv[i], loopDef, this.layerArgs(i, ly));
     }
 
-    setQuality { arg q;
-        var d = if(q > 0, { \grainsloopeco }, { \grainsloop });
+    setLoop {
+        var d = [\grainsloop, \grainsloopeco, \grainsloopbin, \grainsloopecobin][lq + (lb * 2)];
         if(d == loopDef, { ^this });
         loopDef = d;
         nv.do({ arg i;
@@ -497,6 +497,7 @@ Engine_grains : CroneEngine {
     alloc {
         var t9dub = { arg x, f, amt, k1, k2; var d = x - OnePole.ar(x, 1 - f), h = (Delay1.ar(d) * (k2 / k1) + d).clip2(1 / k1), m = h.abs; x + (h * OnePole.ar(m / log(m * (255 * k1) + 1).max(1e-9), 1 - f) * (amt * (2.40823997 * k1 * k1))) };
         var csoft = { arg v; var c = v.clip2(1); c * (c.squared * -0.5 + 1.5) }, tri = { arg d; 1 - ((d - 2048).abs * 0.00048828125) };
+        var bpan = { arg x, az, v; var e = az.abs.min(1), th = e * 0.5pi, n = Delay1.ar(x) * (v * (0.707 + (e * 0.07))), f = OnePole.ar(DelayL.ar(x, 0.001, 0.000255 * (th + th.sin) + SampleDur.ir), (e * 0.8).squared) * (v * (0.707 - (e * 0.18))), r = az > 0; [Select.ar(r, [n, f]), Select.ar(r, [f, n])] };
         nornsAddr = NetAddr("127.0.0.1", 10111);
 
         inL = -1;
@@ -548,7 +549,8 @@ Engine_grains : CroneEngine {
 
         context.server.sync;
 
-        [\grainsloop, \grainsloopeco].do({ arg defName, eco;
+        [\grainsloop, \grainsloopeco, \grainsloopbin, \grainsloopecobin].do({ arg defName, k;
+        var eco = k % 2, bin = k div: 2;
         SynthDef(defName, {
             arg bus, buf, statebus = 0, posStart = 0, posEnd = 1, mrate = 1, prate = 1, gate = 1, rel = 1, rateSlew = 1.5, vrate = 1, weight1 = 14, weight2 = 8, weight3 = 3, weight4 = 6, weight5 = 4, lrate1 = 1, lrate2 = 0.5, lrate3 = 4, lrate4 = 2, lrate5 = 0.25, lamp1 = 1, lamp2 = 1.5849, lamp3 = 0.1259, lamp4 = 0.3981, lamp5 = 1.2589, revprob = 0.1, panwidth = 0.5, ampfloor = 0.25, kTune = 3, kDir = 6, kAmp = 4.5, kPan = 8, phAmp = 0, phPan = 0, lagAmp = 0.4, i_intro = 1;
 
@@ -607,7 +609,7 @@ Engine_grains : CroneEngine {
                 * EnvGen.kr(Env.adsr(1, 1, 1, rel), gate + boot, doneAction: 2) * Lag.kr(amp2, lagAmp);
 
             Out.kr(statebus, ((posK - edge) / use).clip(0, 1));
-            Out.ar(bus, Pan2.ar(snd, lfoPan, volume));
+            Out.ar(bus, if(bin > 0, { bpan.(snd, lfoPan, volume) }, { Pan2.ar(snd, lfoPan, volume) }));
         }).add;
         });
 
@@ -1003,7 +1005,8 @@ Engine_grains : CroneEngine {
         this.addCommand("set_one", "isf", { arg msg; this.setVoice(msg[1].asInteger, msg[2].asSymbol, msg[3]); });
         this.addCommand("clear_param", "is", { arg msg; this.clearParam(msg[1].asInteger, msg[2].asSymbol); });
         this.addCommand("reseed", "", { this.reseedAll });
-        this.addCommand("quality", "i", { arg msg; this.setQuality(msg[1].asInteger) });
+        this.addCommand("quality", "i", { arg msg; lq = (msg[1] > 0).binaryValue; this.setLoop });
+        this.addCommand("binaural", "i", { arg msg; lb = (msg[1] > 0).binaryValue; this.setLoop });
         this.addCommand("reseed_one", "i", { arg msg; this.reseedVoice(msg[1].asInteger) });
         this.addCommand("active", "ii", { arg msg; var i = msg[1].asInteger; var on = msg[2] > 0; if((i >= 0) and: { i < nv } and: { on != actives[i] }, { actives[i] = on; if(on, { if(buffers[i] !== silent, { this.startVoice(i) }); }, { this.stopVoice(i); this.clearState(i); }); }); });
         this.addCommand("layers", "ii", { arg msg; var i = msg[1].asInteger; if((i >= 0) and: { i < nv }, { this.setLayers(i, msg[2].asInteger); }); });

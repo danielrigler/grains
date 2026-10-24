@@ -81,6 +81,7 @@ local fx = {
   dimension_mix = 0,
   vibe_mix      = 0,
   haas          = 1,
+  binaural      = 1,
   rspeed        = 0,
   eq_low        = 0,
   eq_mid        = 0,
@@ -172,12 +173,12 @@ local function tape_intensity(c)
 end
 
 local function stereo_active(c)
-  return c.m_width ~= 100 or c.haas == 2 or c.rspeed > 0
+  return c.m_width ~= 100 or c.haas == 2 or c.binaural == 2 or c.rspeed > 0
 end
 
 local function stereo_intensity(c)
   local w = abs(c.m_width - 100) / 100
-  local h = c.haas == 2 and (BINARY_ON / 100) or 0
+  local h = (c.haas == 2 or c.binaural == 2) and (BINARY_ON / 100) or 0
   return max(w, h, c.rspeed) * 100
 end
 
