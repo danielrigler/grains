@@ -459,8 +459,13 @@ end
 local MO_CTL = {"morph_depth", "morph_shape", "morph_sync", "morph_slew"}
 local V_CTL = {"vlfo_shape", "vlfo_depth", "vlfo_sync"}
 local R_CTL = {"rlfo_mode", "rlfo_shape", "rlfo_depth", "rlfo_spread", "rlfo_sync"}
+local REV_CTL = {"rev_series", "d_series", "rev_decay", "rev_damp", "rev_pre", "rev_mdepth", "rev_mrate"}
 
 function S.vis()
+  local pl = pv("rev_type") == 1
+  for _, id in ipairs(REV_CTL) do
+    if pl then params:show(id) else params:hide(id) end
+  end
   local d = S.dly_synced()
   local on = S.mo_on()
   local m = on and S.mo_synced()

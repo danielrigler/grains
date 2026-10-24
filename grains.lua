@@ -1,7 +1,7 @@
 --
 --
 --
---          grains v0.19
+--          grains v0.20
 --           @dddstudio
 --
 --
@@ -120,7 +120,7 @@ C.RATE_SPLIT_CHANCE = 35
 local ui_metro
 local pits = {}
 local morph_on = false
-C.MORPH_SKIP = {morph = true, source = true, chunk = true, lseed = true, level = true, quality = true, limiter = true}
+C.MORPH_SKIP = {morph = true, source = true, chunk = true, lseed = true, level = true, quality = true, limiter = true, rev_type = true, d_series = true}
 
 local function morph_skip(id)
   return (C.MORPH_SKIP[id]
@@ -149,7 +149,7 @@ for i = 1, NV do
 end
 
 local UN = {ids = {}, np = 0, buf = {n = 0}}
-UN.skip = {source = true, morph = true, density = true, quality = true, limiter = true}
+UN.skip = {source = true, morph = true, density = true, quality = true, limiter = true, rev_type = true, d_series = true}
 
 local dirty = true
 local menu_was = false
@@ -287,12 +287,13 @@ end
 
 local function rolls(id) return params:get("lock_" .. id) == 1 end
 
-local function nrev_set_mix(db)
+local function rev_route()
+  local db, sys = params:get("reverb_mix"), params:get("rev_type") == 2
+  local on = db > -40
+  local w = (on and not sys) and 10 ^ (db / 20) or 0
+  if C.rev_w ~= w then C.rev_w = w engine.rev_mix(w) end
   if C.initial_reverb == nil then return end
-  if db <= -40 then
-    params:set("reverb", 1)
-    return
-  end
+  if not (sys and on) then params:set("reverb", 1) return end
   params:set("reverb", 2)
   params:set("rev_eng_input", db)
 end
@@ -2066,7 +2067,7 @@ end
 
 local function setup_params()
 
-  local HIDDEN = {"grains_tune", "grains_reverb", "reverb_mix", "level", "lseed", "morph_seed", "grains_hold"}
+  local HIDDEN = {"grains_tune", "level", "lseed", "morph_seed", "grains_hold"}
   local SLOT_CHARS = 24
 
   local esent = {}
@@ -2082,6 +2083,12 @@ local function setup_params()
     params:set_action(id, function(x)
       x = x - 1
       if esent[id] ~= x then esent[id] = x engine[id](x) end
+    end)
+  end
+  local function engf(id, f)
+    params:set_action(id, function(v)
+      v = f(v)
+      if esent[id] ~= v then esent[id] = v engine[id](v) end
     end)
   end
 
@@ -2197,14 +2204,27 @@ local function setup_params()
     HIDDEN[#HIDDEN + 1] = "vdb" .. i
   end
 
-  params:add_group("grains_reverb", "R3VERB", 1)
-  params:add_taper("reverb_mix", "Mix", -40, 18, -40, 0, "dB") params:set_action("reverb_mix", nrev_set_mix)
+  params:add_group("grains_reverb", "REVERB", 8)
+  params:add_option("rev_type", "Type", {"plate", "system"}, 1) params:set_action("rev_type", function() rev_route() Sync.vis() end)
+  params:add_taper("reverb_mix", "Mix", -40, 18, -40, 0, "dB") params:set_action("reverb_mix", rev_route)
+  params:lookup_param("reverb_mix").string = function(p) return fast_db(p:get()) end
+  params:add_control("rev_decay", "Decay", controlspec.new(0.3, 60, "exp", 0, 4, "s")) engf("rev_decay", function(v) return 10 ^ (-0.468 / v) end)
+  params:add_control("rev_damp", "Damping", controlspec.new(0, 100, "lin", 1, 40, "%")) engf("rev_damp", function(v) return math.exp(-2.356194 * (1 / 30) ^ (v * 0.01)) end)
+  params:add_control("rev_pre", "Pre Delay", controlspec.new(0, 250, "lin", 1, 20, "ms")) eng("rev_pre", 0.001)
+  pct("rev_mdepth", "Mod Depth", 30)
+  params:add_control("rev_mrate", "Mod Rate", controlspec.new(0.05, 5, "exp", 0, 0.5, "Hz")) eng("rev_mrate")
+  params:add_control("rev_series", "Delay > Reverb", controlspec.new(0, 100, "lin", 1, 25, "%")) params:set_action("rev_series", function(v)
+    if esent.rev_series ~= v then esent.rev_series = v engine.rev_series(v * 0.01) end
+    params:set("d_series", v, true)
+  end)
 
-  params:add_group("grains_delay", "DELAY", 11)
+  params:add_group("grains_delay", "DELAY", 13)
   pct("d_mix", "Mix", 0)
   params:add_control("d_time", "Time", controlspec.new(0.02, 5, "exp", 0, 0.5, "s")) params:set_action("d_time", Sync.dly_refresh)
   params:add_option("d_sync", "Time Base", {"free", "clock"}, 1) params:set_action("d_sync", function() Sync.dly_refresh() Sync.vis() end)
   params:add_number("d_div", "Division", 1, Sync.NDIV, Sync.DIV_QUART, Sync.dly_fmt) params:set_action("d_div", Sync.dly_refresh)
+  local D_RATIO = {0.25, 1 / 3, 0.5, 2 / 3, 0.75, 1, 4 / 3, 1.5, 2, 3, 4}
+  params:add_option("d_ratio", "L/R Ratio", {"4:1", "3:1", "2:1", "3:2", "4:3", "1:1", "3:4", "2:3", "1:2", "1:3", "1:4"}, 6) engf("d_ratio", function(x) return D_RATIO[x] end)
   params:add_control("d_fb", "Feedback", controlspec.new(0, 120, "lin", 1, 40, "%")) eng("d_fb", 0.01)
   params:add_control("d_lpf", "LPF", controlspec.new(20, 20000, "exp", 1, 7500, "Hz")) eng("d_lpf")
   params:add_control("d_hpf", "HPF", controlspec.new(20, 20000, "exp", 1, 200, "Hz")) eng("d_hpf")
@@ -2212,6 +2232,10 @@ local function setup_params()
   params:add_control("d_wrate", "Mod Freq", controlspec.new(0, 20, "lin", 0.1, 2, "Hz")) eng("d_wrate")
   pct("d_stereo", "Ping-Pong", 20)
   pct("d_duck", "Ducking", 17)
+  params:add_control("d_series", "Delay > Reverb", controlspec.new(0, 100, "lin", 1, 25, "%")) params:set_action("d_series", function(v) params:set("rev_series", v) end)
+  for _, id in ipairs({"rev_series", "d_series"}) do
+    params:lookup_param(id).string = function(p) local v = p:get() return v <= 0 and "parallel" or v >= 100 and "series" or string.format("%d%%", floor(v + 0.5)) end
+  end
 
   params:add_group("grains_shimmer", "SHIMMER", 8)
   pct("sh_mix", "Mix", 0)
@@ -2807,7 +2831,7 @@ function init()
       pop_show("fx", "density: " .. params:string("density"))
     end,
     pop = function(label, id)
-      pop_show("fx", label .. ": " .. (id == "reverb_mix" and fast_db(params:get(id)) or params:string(id)))
+      pop_show("fx", label .. ": " .. params:string(id))
     end,
     grab = region_grab,
     bounds = function(i, a, w)
