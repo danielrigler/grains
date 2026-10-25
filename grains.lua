@@ -2429,11 +2429,6 @@ local function setup_params()
   pct("sh_fb", "Feedback", 20)
 
   fxlock("shimmer")
-  for _, id in ipairs({"d_mix", "sh_mix"}) do
-    local p = params:lookup_param(id)
-    local str = p.string
-    p.string = function(q) return q:get() <= 0 and "OFF" or str(q) end
-  end
 
   params:add_group("grains_tape", "TAPE", 11)
   params:add_option("tape_mix", "Tape Sim", {"OFF", "ON"}, 1) engopt("tape_mix")
@@ -2557,6 +2552,13 @@ local function setup_params()
   pct("gl_decay", "Decay", 0)
   fxlock("glitch")
   FXM.build(#params.params)
+  for _, id in ipairs({"d_mix", "sh_mix", "reel_mix", "shaper_mix", "wobble_mix", "genloss_mix",
+                       "dimension_mix", "stchorus_mix", "vibe_mix", "bc_mix", "wf_mix", "reso_mix",
+                       "ringmod_mix", "spiral_mix", "sub_mix", "ott_mix", "gl_ratio", "gl_mix"}) do
+    local p = params:lookup_param(id)
+    local str = p.string
+    p.string = function(q) return q:get() <= 0 and "OFF" or str(q) end
+  end
 
   params:add_group("grains_gen", "RANDOMIZE", 11)
   params:add_binary("do_dice", "Randomize!", "trigger", 0) params:set_action("do_dice", function(v) if v == 1 then Undo.mark() dice() end end)
