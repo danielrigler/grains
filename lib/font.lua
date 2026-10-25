@@ -242,22 +242,22 @@ local _sh_lfo = make_mix_mod()
 
 local FX_SPECS = {
   {glyph = "K", show = clock_active,                                custom_level = clock_custom},
-  {glyph = "F", show = filter_active,                              val = filter_intensity},
-  {glyph = "E", show = eq_active,                                  val = eq_intensity},
-  {glyph = "B", show = function(c) return c.bc_mix > 0 end,         val = function(c) return c.bc_mod == 2 and c.bc_mix * _bc_lfo(_draw_now) or c.bc_mix end},
-  {glyph = "O", show = function(c) return c.reso_mix > 0 end,       val = function(c) return c.reso_mix end},
-  {glyph = "W", show = function(c) return c.wf_mix > 0 end,         val = function(c) return c.wf_mix end},
-  {glyph = "M", show = function(c) return c.ringmod_mix > 0 end,   val = function(c) return c.ringmod_mix end},
-  {glyph = "U", show = function(c) return c.sub_mix > 0 end,       val = function(c) return c.sub_mix end},
-  {glyph = "c", show = function(c) return c.ott_mix > 0 end,       val = function(c) return c.ott_mix end},
-  {glyph = "S", show = function(c) return c.spiral_mix > 0 end,    val = function(c) return c.spiral_mix end},
-  {glyph = "G", show = function(c) return c.gl_ratio > 0 and c.gl_mix > 0 end, val = function(c) return c.gl_ratio end},
-  {glyph = "T", show = tape_active,                                val = tape_intensity},
-  {glyph = "X", show = function(c) return c.sh_mix > 0 end,        val = function(c) return c.sh_mod == 2 and c.sh_mix * _sh_lfo(_draw_now) or c.sh_mix end},
-  {glyph = "D", show = function(c) return c.d_mix > 0 end,         val = function(c) return c.d_mix end},
-  {glyph = "R", show = function(c) return c.reverb_mix > -40 end,  val = function(c) return util.linlin(-40, 18, 0, 100, c.reverb_mix) end},
-  {glyph = "Z", show = stereo_active,                              val = stereo_intensity},
-  {glyph = "C", show = function(c) return c.dimension_mix > 0 or c.stchorus_mix > 0 or c.vibe_mix > 0 end, val = function(c) return max(c.dimension_mix, c.stchorus_mix, c.vibe_mix) end}
+  {glyph = "F", grp = "grains_tone",      show = filter_active,                              val = filter_intensity},
+  {glyph = "E", grp = "grains_eq",        show = eq_active,                                  val = eq_intensity},
+  {glyph = "B", grp = "grains_bitcrush",  show = function(c) return c.bc_mix > 0 end,         val = function(c) return c.bc_mod == 2 and c.bc_mix * _bc_lfo(_draw_now) or c.bc_mix end},
+  {glyph = "O", grp = "grains_reso",      show = function(c) return c.reso_mix > 0 end,       val = function(c) return c.reso_mix end},
+  {glyph = "W", grp = "grains_wavefold",  show = function(c) return c.wf_mix > 0 end,         val = function(c) return c.wf_mix end},
+  {glyph = "M", grp = "grains_ringmod",   show = function(c) return c.ringmod_mix > 0 end,   val = function(c) return c.ringmod_mix end},
+  {glyph = "U", grp = "grains_sub",       show = function(c) return c.sub_mix > 0 end,       val = function(c) return c.sub_mix end},
+  {glyph = "c", grp = "grains_ott",       show = function(c) return c.ott_mix > 0 end,       val = function(c) return c.ott_mix end},
+  {glyph = "S", grp = "grains_spiral",    show = function(c) return c.spiral_mix > 0 end,    val = function(c) return c.spiral_mix end},
+  {glyph = "G", grp = "grains_glitch",    show = function(c) return c.gl_ratio > 0 and c.gl_mix > 0 end, val = function(c) return c.gl_ratio end},
+  {glyph = "T", grp = "grains_tape",      show = tape_active,                                val = tape_intensity},
+  {glyph = "X", grp = "grains_shimmer",   show = function(c) return c.sh_mix > 0 end,        val = function(c) return c.sh_mod == 2 and c.sh_mix * _sh_lfo(_draw_now) or c.sh_mix end},
+  {glyph = "D", grp = "grains_delay",     show = function(c) return c.d_mix > 0 end,         val = function(c) return c.d_mix end},
+  {glyph = "R", grp = "grains_reverb",    show = function(c) return c.reverb_mix > -40 end,  val = function(c) return util.linlin(-40, 18, 0, 100, c.reverb_mix) end},
+  {glyph = "Z", grp = "grains_dimension", show = stereo_active,                              val = stereo_intensity},
+  {glyph = "C", grp = "grains_chorus",    show = function(c) return c.dimension_mix > 0 or c.stchorus_mix > 0 or c.vibe_mix > 0 end, val = function(c) return max(c.dimension_mix, c.stchorus_mix, c.vibe_mix) end}
 }
 
 local NFX = #FX_SPECS
@@ -318,6 +318,44 @@ function font.tick(now)
     _changed = true
   end
   return _changed
+end
+
+local OFF = {
+  F = {cutoff = 20000, vhpf = 20},
+  E = {eq_low = 0, eq_mid = 0, eq_high = 0, tilt = 0},
+  B = {bc_mix = 0},
+  O = {reso_mix = 0},
+  W = {wf_mix = 0},
+  M = {ringmod_mix = 0},
+  U = {sub_mix = 0},
+  c = {ott_mix = 0},
+  S = {spiral_mix = 0},
+  G = {gl_ratio = 0},
+  T = {tape_mix = 1, shaper_mix = 0, wobble_mix = 0, reel_mix = 0, genloss_mix = 0},
+  X = {sh_mix = 0},
+  D = {d_mix = 0},
+  R = {reverb_mix = -40},
+  Z = {m_width = 100, haas = 1, binaural = 1, rspeed = 0},
+  C = {dimension_mix = 0, stchorus_mix = 0, vibe_mix = 0}
+}
+
+function font.groups(on)
+  poll()
+  for i = 1, NFX do
+    local s = FX_SPECS[i]
+    if s.grp then on[s.grp] = s.show(fx) end
+  end
+end
+
+function font.clear()
+  poll()
+  for i = 1, NFX do
+    local s = FX_SPECS[i]
+    local off = OFF[s.glyph]
+    if off and s.show(fx) then
+      for id, v in pairs(off) do params:set(id, v) end
+    end
+  end
 end
 
 function font.draw(plot)

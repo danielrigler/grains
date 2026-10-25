@@ -624,21 +624,35 @@ function M.notice(l1, l2, l3)
   lastlevel = -1
 end
 
-function M.fxpopup(txt)
+local function pbar(x, y, w, frac)
+  local fw = floor(clamp(frac, 0, 1) * w + 0.5)
+  screen.level(4)
+  screen.rect(x, y, w, 1)
+  screen.fill()
+  if fw > 0 then
+    screen.level(15)
+    screen.rect(x, y, fw, 1)
+    screen.fill()
+  end
+end
+
+function M.fxpopup(txt, frac)
   local w = #txt * 5 + 8
+  local x = 64 - floor(w * 0.5)
   Rflush()
   screen.level(1)
-  screen.rect(64 - floor(w * 0.5), 26, w, 10)
+  screen.rect(x, 26, w, frac and 12 or 10)
   screen.fill()
   screen.level(15)
   screen.move(64, 34)
   screen.text_center(txt)
+  if frac then pbar(x, 37, w, frac) end
   lastlevel = -1
 end
 
 local REC_W, REC_H, REC_Y = 92, 27, 20
 
-function M.recpopup(title, sub, frac, note)
+function M.recpopup(title, sub, frac, note, prog)
   local x = 64 - floor(REC_W / 2)
   local bw = REC_W - 10
   local plain = not (sub or note or frac)
@@ -682,6 +696,7 @@ function M.recpopup(title, sub, frac, note)
       end
     end
   end
+  if prog then pbar(x, REC_Y + h - 1, REC_W, prog) end
   lastlevel = -1
 end
 

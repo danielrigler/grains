@@ -15,13 +15,13 @@ Engine_grains : CroneEngine {
     var curStride, reportSlots, trashIndex, curReportK = -1;
     var busMain, busDly, fxMain, fxDelay, fxShimmer, fxTilt, fxDimension;
     var fxEq, fxTape, fxShaper, fxWobble, fxBitcrush, fxWavefold;
-    var fxResonator, fxGlitch, fxHaas, fxRotate, fxRingmod, fxStChorus, fxVibe, fxSpiral, fxGenloss, fxSub, fxReel, fxOtt, fxVerb, spiralBuffer;
+    var fxResonator, fxGlitch, fxHaas, fxRotate, fxRingmod, fxStChorus, fxVibe, fxSpiral, fxGenloss, fxSub, fxReel, fxOtt, fxVerb, fxLevel, spiralBuffer;
     var voiceBus, vfilt, vfg, vfTok, filtKeys, filtSet, stateMsg, vfDef, vfOn, loopDef = \grainsloop, lq = 0, lb = 0;
     var wobbleBuffer, glitchBuffer, bufSine;
     var eqLow = 0, eqMid = 0, eqHigh = 0, glRatio = 0, glMix = 1;
     var vparams, gparams, nls, actives, wins, loadTok, loadReq, loadBusy;
     var recBuf, recSyn, recPath, recNorm = 0, recBegan, recOn = false, oRec, inL = 0, inR = 1;
-    var fxTok, mainDef = \grainsmain, mainWidth = 1;
+    var fxTok;
 
     *new { arg context, doneCallback; ^super.new(context, doneCallback); }
 
@@ -30,9 +30,7 @@ Engine_grains : CroneEngine {
 
     fxRun { arg syn, on, tail = 0; var t = (fxTok[syn] ? 0) + 1; fxTok[syn] = t; if(on, { syn.set(\flush, 0); syn.run(true) }, { if(tail > 0, { syn.set(\flush, 1); fork { tail.wait; if(fxTok[syn] == t, { syn.run(false) }) } }, { syn.run(false) }) }); }
 
-    setLimiter { arg on; var d = if(on, { \grainsmainlim }, { \grainsmain }); if(d == mainDef, { ^this }); mainDef = d; fxMain = Synth.replace(fxMain, d, [\bus, busMain.index, \out, context.out_b.index, \width, mainWidth]); }
-
-    bounce { arg dur, name, xf = 0.05;
+    bounce { arg dur, name, xf = 0.05, norm = 0;
         fork {
             var dir = recDir;
             var frames = (context.server.sampleRate * dur).round.asInteger;
@@ -42,6 +40,7 @@ Engine_grains : CroneEngine {
             context.server.sync;
             syn = Synth.new(\grainsbounce, [\buf, buf, \bus, busMain.index, \xf, xf], context.xg, 'addToTail');
             (dur + xf + 0.3).wait;
+            if(norm > 0, { buf.normalize(norm); context.server.sync });
             buf.write(dir ++ name ++ ".wav", "WAV", "float");
             context.server.sync;
             syn.free;
@@ -831,6 +830,11 @@ Engine_grains : CroneEngine {
             ReplaceOut.ar(bus, Rotate2.ar(sig[0], sig[1], LFSaw.kr(rspeed)));
         }).add;
 
+        SynthDef(\grainslevel, {
+            arg bus, amp = 1;
+            ReplaceOut.ar(bus, In.ar(bus, 2) * Lag.kr(amp, 0.05));
+        }).add;
+
         SynthDef(\grainsbounce, {
             arg buf, bus, xf = 0.05;
             var sig = In.ar(bus, 2);
@@ -945,15 +949,12 @@ Engine_grains : CroneEngine {
             ReplaceOut.ar(bus, XFade2.ar(sig, wide, mix * 2 - 1));
         }).add;
 
-        [\grainsmain, \grainsmainlim].do({ arg defName, lim;
-        SynthDef(defName, { arg bus, out = 0, width = 1;
+        SynthDef(\grainsmain, { arg bus, out = 0, width = 1;
             var sig = In.ar(bus, 2), m, s;
             m = (sig[0] + sig[1]) * 0.5;
             s = (sig[0] - sig[1]) * 0.5 * width.clip(0, 2);
-            sig = [m + s, m - s];
-            Out.ar(out, if(lim > 0, { Limiter.ar(sig, 0.95, 0.008) }, { sig }));
+            Out.ar(out, [m + s, m - s]);
         }).add;
-        });
 
         context.server.sync;
 
@@ -981,7 +982,6 @@ Engine_grains : CroneEngine {
         fxWobble = Synth.newPaused(\grainswobble, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
         fxGenloss = Synth.newPaused(\grainsgenloss, [\bus, busMain.index], context.xg, 'addToTail');
         fxSub = Synth.newPaused(\grainssub, [\bus, busMain.index], context.xg, 'addToTail');
-        fxSpiral = Synth.newPaused(\grainsspiral, [\bus, busMain.index], context.xg, 'addToTail');
         fxShimmer = Synth.newPaused(\grainsshimmer, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
         fxRotate = Synth.newPaused(\grainsrotate, [\bus, busMain.index, \rspeed, 0], context.xg, 'addToTail');
         fxStChorus = Synth.newPaused(\grainsstchorus, [\bus, busMain.index], context.xg, 'addToTail');
@@ -989,6 +989,8 @@ Engine_grains : CroneEngine {
         fxDimension = Synth.newPaused(\grainsdimension, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
         fxHaas = Synth.newPaused(\grainshaas, [\bus, busMain.index], context.xg, 'addToTail');
         fxOtt = Synth.newPaused(\grainsott, [\bus, busMain.index], context.xg, 'addToTail');
+        fxLevel = Synth.new(\grainslevel, [\bus, busMain.index], context.xg, 'addToTail');
+        fxSpiral = Synth.newPaused(\grainsspiral, [\bus, busMain.index], context.xg, 'addToTail');
         fxDelay = Synth.newPaused(\grainsdelay, [\bus, busMain.index, \wbus, busDly.index, \mix, 0], context.xg, 'addToTail');
         fxVerb = Synth.newPaused(\grainsverb, [\bus, busMain.index, \dbus, busDly.index], context.xg, 'addToTail');
         fxMain = Synth.new(\grainsmain, [\bus, busMain.index, \out, context.out_b.index], context.xg, 'addToTail');
@@ -1034,8 +1036,8 @@ Engine_grains : CroneEngine {
         this.addCommand("sh_mix", "f", { arg msg; fxShimmer.set(\mix, msg[1]); this.fxRun(fxShimmer, msg[1] > 0, 1.6); });
         this.addCommand("tilt", "f", { arg msg; fxTilt.set(\tilt, msg[1]); fxTilt.run(msg[1] != 0); });
         this.addCommand("dimension_mix", "f", { arg msg; fxDimension.set(\mix, msg[1]); fxDimension.run(msg[1] > 0); });
-        this.addCommand("m_width", "f", { arg msg; mainWidth = msg[1]; fxMain.set(\width, msg[1]) });
-        this.addCommand("limiter", "i", { arg msg; this.setLimiter(msg[1] > 0) });
+        this.addCommand("master", "f", { arg msg; fxLevel.set(\amp, msg[1]) });
+        this.addCommand("m_width", "f", { arg msg; fxMain.set(\width, msg[1]) });
         this.addCommand("eq_low", "f", { arg msg; eqLow = msg[1]; fxEq.set(\low, msg[1]); this.updateEq });
         this.addCommand("eq_mid", "f", { arg msg; eqMid = msg[1]; fxEq.set(\mid, msg[1]); this.updateEq });
         this.addCommand("eq_high", "f", { arg msg; eqHigh = msg[1]; fxEq.set(\high, msg[1]); this.updateEq });
@@ -1060,7 +1062,7 @@ Engine_grains : CroneEngine {
         this.addCommand("reel_mix", "f", { arg msg; fxReel.set(\mix, msg[1]); fxReel.run(msg[1] > 0) });
         this.addCommand("ott_mix", "f", { arg msg; fxOtt.set(\mix, msg[1]); fxOtt.run(msg[1] > 0) });
         this.addCommand("rev_mix", "f", { arg msg; fxVerb.set(\mix, msg[1]); this.fxRun(fxVerb, msg[1] > 0, 1.5) });
-        this.addCommand("bounce", "fsf", { arg msg; this.bounce(msg[1], msg[2].asString, msg[3]) });
+        this.addCommand("bounce", "fsff", { arg msg; this.bounce(msg[1], msg[2].asString, msg[3], msg[4]) });
         this.addCommand("rec_start", "sfffff", { arg msg; this.recStart(msg[1].asString, msg[2], msg[3], msg[4], msg[5], msg[6]) });
         this.addCommand("rec_stop", "i", { arg msg; this.recStop(msg[1].asInteger) });
 
@@ -1088,7 +1090,7 @@ Engine_grains : CroneEngine {
         voices.do({ arg row; row.do({ arg x; if(x.notNil, { x.free }) }) });
         [reporter, fxMain, fxDelay, fxShimmer, fxTilt, fxDimension, fxEq, fxTape,
          fxShaper, fxWobble, fxBitcrush, fxWavefold, fxResonator, fxGlitch,
-         fxHaas, fxRotate, fxRingmod, fxStChorus, fxVibe, fxSpiral, fxGenloss, fxSub, fxReel, fxOtt, fxVerb, vfg, dg].do({ arg x; if(x.notNil, { x.free }); });
+         fxHaas, fxRotate, fxRingmod, fxStChorus, fxVibe, fxSpiral, fxGenloss, fxSub, fxReel, fxOtt, fxVerb, fxLevel, vfg, dg].do({ arg x; if(x.notNil, { x.free }); });
         if(pgv.notNil, { pgv.do({ arg g; if(g.notNil, { g.free }) }) });
         if(pg.notNil, { pg.free });
         buffers.do({ arg b; if(b.notNil and: { b !== silent }, { b.free }) });

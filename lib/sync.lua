@@ -429,28 +429,19 @@ local function rval(i, n, off, s)
 end
 
 
-local LMIN = log(RMIN)
-local ZOOM = 4 * log(2)
-
-local function fold(x)
-  x = x % 2
-  return x > 1 and 2 - x or x
-end
-
 function S.region(i, a, b, n)
   if rdepth <= 0 then return a, b end
   if n < 1 then n = 1 end
   local w = b - a
-  local t = w < 1 and (a / (1 - w) - 0.5) * (1 - 0.5 * rdepth) + 0.5 or 0.5
+  local t = w < 1 and a / (1 - w) or 0.5
   if rmode ~= 1 then
-    local lw, z = log(w > RMIN and w or RMIN), rdepth * ZOOM
-    local lo, hi = lw - z, lw + z
-    if hi > 0 then lo, hi = lo - hi, 0 end
-    if lo < LMIN then hi, lo = min(hi + LMIN - lo, 0), LMIN end
-    w = exp(lo + rval(i, n, rmode == 3 and 0.25 or 0, 20 + i) * (hi - lo))
+    local lo, hi = max(w * (1 - rdepth), min(w, RMIN)), min(w * (1 + rdepth), 1)
+    w = lo + rval(i, n, rmode == 3 and 0.25 or 0, 20 + i) * (hi - lo)
   end
   if rmode ~= 2 then
-    t = fold(t + (rval(i, n, 0, 10 + i) - 0.5) * rdepth)
+    local h = rdepth * 0.5
+    local lo, hi = max(t - h, 0), min(t + h, 1)
+    t = lo + rval(i, n, 0, 10 + i) * (hi - lo)
   end
   a = t * (1 - w)
   return a, a + w

@@ -1,7 +1,7 @@
 --
 --
 --
---          grains v0.20
+--          grains v0.21
 --           @dddstudio
 --
 --
@@ -107,20 +107,21 @@ local REC = {
   confirm_dur = 10, kinds = {loop = "grains_", input = "in_"},
   state = nil, t0 = 0, level = 0, peak = 0,
   path = nil, target = 1, tick = -1, txt = nil, wait = 0,
-  bars = {0, 0}, sub = "", shown = -1
+  bars = {0, 0}, sub = "", shown = -1,
+  steps = 64, bq = -1, bt0 = 0, blen = 1
 }
 local DB_FLOOR = -60
 C.LEVEL_MAX_DB = 6
+C.LEVEL_REF = -12
+C.LEVEL_DEFAULT = -20
 C.LEVEL_STEP_DB = 1
 C.VOL_DEFAULT_DB = -6
 local LPF_OFF = 20000
-C.HPF_OFF = 20
-C.NOFILTER_CHANCE = 50
 C.RATE_SPLIT_CHANCE = 35
 local ui_metro
 local pits = {}
 local morph_on = false
-C.MORPH_SKIP = {morph = true, source = true, chunk = true, lseed = true, level = true, quality = true, limiter = true, rev_type = true, d_series = true, binaural = true}
+C.MORPH_SKIP = {morph = true, source = true, chunk = true, lseed = true, level = true, quality = true, rev_type = true, d_series = true, binaural = true}
 
 local function morph_skip(id)
   return (C.MORPH_SKIP[id]
@@ -133,7 +134,7 @@ local nva, lcap = -1, -1
 
 local S = {
   wf = {}, raw = {}, pos = {}, on = {}, loaded = {},
-  ls = {}, le = {}, files = {},
+  ls = {}, le = {}, files = {}, len = {},
   b0 = {}, b1 = {}, nl = {},
   volf = {}, volb = {}, pitchf = {}, pin = {}
 }
@@ -149,7 +150,7 @@ for i = 1, NV do
 end
 
 local UN = {ids = {}, np = 0, buf = {n = 0}}
-UN.skip = {source = true, morph = true, density = true, quality = true, limiter = true, rev_type = true, d_series = true, binaural = true}
+UN.skip = {source = true, morph = true, density = true, quality = true, rev_type = true, d_series = true, binaural = true}
 
 local dirty = true
 local menu_was = false
@@ -277,15 +278,30 @@ end
 
 local bounce_until = 0
 
-local function start_bounce()
+local function start_bounce(mode)
   if bounce_until > 0 then return end
+  local to
+  if mode == "new" then
+    to = REC.free_slot()
+    if to == nil then
+      if not REC.state then REC.finish("no free voices") end
+      return
+    end
+  elseif mode then
+    to = sel >= 1 and sel or 1
+  end
   local d, xf = params:get("bounce_len"), params:get("bounce_xf")
-  bounce_until = util.time() + d + xf + 0.5
-  engine.bounce(d, "grains_" .. os.date("%y%m%d_%H%M%S"), xf)
+  local name = REC.kinds.loop .. os.date("%y%m%d_%H%M%S")
+  local now = util.time()
+  bounce_until = now + d + xf + REC.save_wait
+  REC.bto, REC.bnew, REC.bpath = to, mode == "new", REC.dir .. name .. ".wav"
+  REC.bt0, REC.blen, REC.bq = now, d + xf, -1
+  engine.bounce(d, name, xf, params:get("rec_lnorm") == 2 and 10 ^ (REC.norm_db / 20) or 0)
   dirty = true
 end
 
 local function rolls(id) return params:get("lock_" .. id) == 1 end
+local function fxlocked(g) return params:get("fxlock_" .. g) == 1 end
 
 local function rev_route()
   local db, sys = params:get("reverb_mix"), params:get("rev_type") == 2
@@ -301,6 +317,12 @@ end
 local function fast_db(v)
   if v <= -40 then return "OFF" end
   return string.format("%d dB", floor(v + 0.5))
+end
+
+function C.fxstr(id)
+  local v = params:get(id)
+  if id == "reverb_mix" then return fast_db(v) end
+  return v <= 0 and "OFF" or string.format("%d%%", floor(v + 0.5))
 end
 
 local sent = {}
@@ -352,9 +374,7 @@ end
 local G = {}
 local DENSP
 local DICE_GLOBALS, DICE_SET = {table.unpack(SCALARS)}, {}
-for _, p in ipairs(VOICE_PARAMS) do
-  if p[2] ~= "res" then DICE_GLOBALS[#DICE_GLOBALS + 1] = p[2] end
-end
+for _, p in ipairs(VOICE_PARAMS) do DICE_GLOBALS[#DICE_GLOBALS + 1] = p[2] end
 for _, id in ipairs(DICE_GLOBALS) do DICE_SET[id] = true end
 
 local dicing = false
@@ -496,7 +516,7 @@ local function push_per_voice()
   local gpr     = G.pitchrate
   local gcut    = G.cutoff
   local gflr    = G.ampfloor * 0.01
-  local lvl     = G.level
+  local lvl     = C.LEVEL_REF
   for i = 1, nva do
     local s = vseed[i]
     local pid = PID[i]
@@ -542,8 +562,8 @@ local function push_per_voice()
       eset_one(i, "mrate", m)
       eset_one(i, "prate", (frz or pr <= RATE_OFF) and 0 or clamp(pr * emod, 0.02, 12))
       eset_one(i, "cutoff", cut >= LPF_OFF - 1 and LPF_OFF or clamp(cut * 2 ^ (s.cut * var * 2.6), 90, LPF_OFF))
-      local db = clamp(lvl + ivol + trim + s.lvl * var * 7, -100, 6)
-      if lvl <= -59.5 or ivol <= -59.5 then db = -100 end
+      local db = clamp(lvl + ivol + trim + s.lvl * var * 7, -100, lvl + 26)
+      if ivol <= -59.5 then db = -100 end
       Sync.vbase[i] = db
       if not Sync.von then eset_one(i, "vamp", TUNE.amp(db)) end
       eset_one(i, "ampfloor", clamp(flr + s.floor * var * 0.35, 0, 1))
@@ -837,6 +857,9 @@ local function state_dump(f)
     if S.files[i] and vlocked[i] and S.pin[i] then
       f:write(string.format("pin %d %d\n", i, S.pin[i]))
     end
+    if S.files[i] and S.len[i] then
+      f:write(string.format("src %d %.6f %.6f\n", i, vstart[i] or 0, S.len[i]))
+    end
   end
   f:write(string.format("mpos %.6f\n", Morph.pos))
   for k = 1, Morph.slots() do
@@ -926,6 +949,13 @@ local function pset_line(line, r)
       return true
     end
 
+  elseif tag == "src" and voice then
+    local at, len = tonumber(tok[3]), tonumber(tok[4])
+    if at and len and at >= 0 and len > 0 then
+      r.src[voice] = {at = at, len = len}
+      return true
+    end
+
   elseif tag == "mpos" then
     r.mpos = tonumber(tok[2])
     return r.mpos ~= nil
@@ -1003,7 +1033,7 @@ local function state_apply(r)
 end
 
 local function pset_read(fn)
-  local r = {seed = {}, pit = {}, hold = {}, pin = {}}
+  local r = {seed = {}, pit = {}, hold = {}, pin = {}, src = {}}
   if not (pset_scan(fn .. ".gstate", r) or pset_scan_old(fn, r)) then
     freeze_refresh()
     lock_refresh()
@@ -1011,6 +1041,7 @@ local function pset_read(fn)
     return
   end
   state_apply(r)
+  C.src_apply(r.src)
   Undo.clear()
 end
 
@@ -1318,21 +1349,43 @@ local function unload_view(i)
   for L = 1, NL do pos[L] = 0 end
 end
 
-local function load_voice(i, path, whole, at)
-  S.files[i] = path
+local function load_voice(i, path, len, at)
+  len = len or params:get("chunk")
+  S.files[i], S.len[i] = path, len
   vstart[i] = at or 0
   dirty = true
   unload_view(i)
   params:set(PID[i].file, path, true)
   refresh_layout()
-  engine.read(i - 1, path,
-    whole and REC.whole or params:get("chunk"),
-    (whole or at) and 0 or 1,
-    at or 0)
+  engine.read(i - 1, path, len, at and 0 or 1, at or 0)
+end
+
+C.fpend = {}
+
+function C.src_apply(src)
+  for i = 1, NV do
+    local s, f = src[i], C.fpend[i] or S.files[i]
+    if s and f and (C.fpend[i] or abs((vstart[i] or 0) - s.at) > 1e-3 or abs((S.len[i] or 0) - s.len) > 1e-3) then
+      C.fpend[i] = f
+    end
+  end
+  C.src = src
+end
+
+function C.src_flush()
+  local src = C.src
+  C.src = nil
+  for i, path in pairs(C.fpend) do
+    C.fpend[i] = nil
+    local s = src and src[i]
+    tries[i] = 0
+    load_voice(i, path, s and s.len, s and s.at)
+  end
 end
 
 local function clear_voice(i)
-  S.files[i] = nil
+  C.fpend[i] = nil
+  S.files[i], S.len[i] = nil, nil
   vstart[i] = 0
   S.pin[i] = nil
   tries[i] = 0
@@ -1350,7 +1403,7 @@ function UN.build()
     local id = p and p.id
     if id and p.t ~= tSep and p.t ~= tGrp and p.t ~= tTrg and p.t ~= tTxt
        and not UN.skip[id] and not PID_FILE[id]
-       and not id:find("^do_") and not id:find("^rec_") and not id:find("^bounce_")
+       and not id:find("^do_") and not id:find("^rec_") and not id:find("^bounce_") and not id:find("^fxlock_")
     then
       n = n + 1
       ids[n] = id
@@ -1362,13 +1415,14 @@ function UN.build()
 end
 
 function UN.capture()
-  local t = {g = state_string(), f = {}, at = {},
+  local t = {g = state_string(), f = {}, at = {}, len = {},
              dens = floor(params:get("density"))}
   local ids = UN.ids
   for k = 1, UN.np do t[k] = params:get(ids[k]) end
   for i = 1, NV do
     t.f[i] = S.files[i]
     t.at[i] = vstart[i] or 0
+    t.len[i] = S.len[i]
   end
   return t
 end
@@ -1385,12 +1439,12 @@ function UN.restore(t)
   end)
 
   for i = 1, NV do
-    local want, at = t.f[i], t.at[i] or 0
+    local want, at, len = t.f[i], t.at[i] or 0, t.len[i]
     if want == nil then
       if S.files[i] then clear_voice(i) end
-    elseif want ~= S.files[i] or abs((vstart[i] or 0) - at) > 1e-3 then
+    elseif want ~= S.files[i] or abs((vstart[i] or 0) - at) > 1e-3 or len ~= S.len[i] then
       tries[i] = 0
-      load_voice(i, want, nil, at)
+      load_voice(i, want, len, at)
     end
   end
   layout_busy = false
@@ -1399,7 +1453,7 @@ function UN.restore(t)
   local d = clamp(t.dens, 0, DENSP.max)
   Morph.hold(function() params:set("density", d) end)
 
-  local r = {seed = {}, pit = {}, hold = {}, pin = {}}
+  local r = {seed = {}, pit = {}, hold = {}, pin = {}, src = {}}
   if pset_lines(t.g:gmatch("[^\n]+"), r) then state_apply(r) end
 
   glide = GLIDE_FRAMES
@@ -1548,21 +1602,37 @@ function REC.confirm(yes)
   REC.finish(REC.sweep(REC.kind, true) .. " deleted")
 end
 
-function REC.done(ok)
-  if REC.state ~= "save" then return end
-  if not ok then REC.finish("write failed") return end
-  local i = REC.target
-  if i < 1 or i > NV then i = 1 end
-  if REC.fresh then
+function REC.place(i, path, fresh)
+  if fresh then
     params:set(PID[i].vol, C.VOL_DEFAULT_DB)
     params:set(PID[i].tune, 0)
     params:set(PID[i].bstart, 0)
     params:set(PID[i].bwidth, 100)
   end
   tries[i] = 0
-  load_voice(i, REC.path, true)
+  load_voice(i, path, REC.whole, 0)
   sel = i
+end
+
+function REC.done(ok)
+  if REC.state ~= "save" then return end
+  if not ok then REC.finish("write failed") return end
+  local i = REC.target
+  if i < 1 or i > NV then i = 1 end
+  REC.place(i, REC.path, REC.fresh)
   REC.finish(nil)
+end
+
+function REC.bounced()
+  local i = REC.bto
+  bounce_until, REC.bto = 0, nil
+  if i == nil then return end
+  if REC.bnew and S.files[i] then i = REC.free_slot() end
+  if i == nil then
+    if not REC.state then REC.finish("no free voices") end
+    return
+  end
+  REC.place(i, REC.bpath, REC.bnew)
 end
 
 local function reset_volumes(slots)
@@ -1579,7 +1649,7 @@ local function slot_defaults(i)
   S.loaded[i] = false
   S.on[i] = nil
   S.wf[i], S.raw[i] = nil, nil
-  S.files[i] = nil
+  S.files[i], S.len[i] = nil, nil
   S.nl[i] = 0
   S.b0[i], S.b1[i] = 0, 1
   S.volf[i], S.volb[i], S.pitchf[i] = nil, nil, nil
@@ -1614,7 +1684,7 @@ local function move_slot(src, dst)
 
   if C.MOVE.tables == nil then
     C.MOVE.tables = {
-      S.wf, S.raw, S.pos, S.on, S.loaded, S.ls, S.le, S.files,
+      S.wf, S.raw, S.pos, S.on, S.loaded, S.ls, S.le, S.files, S.len,
       S.b0, S.b1, S.nl, S.volf, S.pitchf, S.volb, S.pin, Sync.vbase,
       pits, xfp, xfw, xfx, xfy,
       cls, cle, lastcol, poscol, last_win,
@@ -1999,35 +2069,32 @@ local DICE = {
   space = function()
     local c = Dice.pick(Dice.SPACE)
     params:set("panwidth", Dice.rnd(c.pan[1], c.pan[2]))
-    if Dice.chance(C.NOFILTER_CHANCE) then
-      params:set("cutoff", LPF_OFF)
-      params:set("vhpf", C.HPF_OFF)
-    else
-      params:set("cutoff", Dice.rndexp(c.cut[1], c.cut[2]))
-      params:set("vhpf", Dice.rnd(C.HPF_OFF, 400))
-    end
     params:set("variance", Dice.rnd(0, 100))
 
-    local d = c.dly
-    if Sync.dly_synced() then
-      params:set("d_div", math.random(3, 14))
+    if not fxlocked("delay") then
+      local d = c.dly
+      if Sync.dly_synced() then
+        params:set("d_div", math.random(3, 14))
+      end
+      params:set("d_time",    Dice.rndexp(d.time[1], d.time[2]))
+      params:set("d_fb",      Dice.rnd(d.fb[1], d.fb[2]))
+      params:set("d_lpf",     Dice.rndexp(d.lpf[1], d.lpf[2]))
+      params:set("d_hpf",     Dice.rndexp(d.hpf[1], d.hpf[2]))
+      params:set("d_stereo",  Dice.rnd(d.stereo[1], d.stereo[2]))
+      params:set("d_duck",    Dice.rnd(d.duck[1], d.duck[2]))
+      params:set("d_wrate",   Dice.rnd(d.wrate[1], d.wrate[2]))
+      params:set("d_wdepth",  Dice.rnd(d.wdepth[1], d.wdepth[2]))
     end
-    params:set("d_time",    Dice.rndexp(d.time[1], d.time[2]))
-    params:set("d_fb",      Dice.rnd(d.fb[1], d.fb[2]))
-    params:set("d_lpf",     Dice.rndexp(d.lpf[1], d.lpf[2]))
-    params:set("d_hpf",     Dice.rndexp(d.hpf[1], d.hpf[2]))
-    params:set("d_stereo",  Dice.rnd(d.stereo[1], d.stereo[2]))
-    params:set("d_duck",    Dice.rnd(d.duck[1], d.duck[2]))
-    params:set("d_wrate",   Dice.rnd(d.wrate[1], d.wrate[2]))
-    params:set("d_wdepth",  Dice.rnd(d.wdepth[1], d.wdepth[2]))
 
-    local h = c.shm
-    params:set("sh_oct",     math.random(h.oct[1], h.oct[2]))
-    params:set("sh_fb",      Dice.rnd(h.fb[1], h.fb[2]))
-    params:set("sh_pitchv",  Dice.rnd(h.pitchv[1], h.pitchv[2]))
-    params:set("sh_fbdelay", Dice.rnd(h.fbdelay[1], h.fbdelay[2]))
-    params:set("sh_lowpass", Dice.rndexp(h.lpf[1], h.lpf[2]))
-    params:set("sh_hipass",  Dice.rndexp(h.hpf[1], h.hpf[2]))
+    if not fxlocked("shimmer") then
+      local h = c.shm
+      params:set("sh_oct",     math.random(h.oct[1], h.oct[2]))
+      params:set("sh_fb",      Dice.rnd(h.fb[1], h.fb[2]))
+      params:set("sh_pitchv",  Dice.rnd(h.pitchv[1], h.pitchv[2]))
+      params:set("sh_fbdelay", Dice.rnd(h.fbdelay[1], h.fbdelay[2]))
+      params:set("sh_lowpass", Dice.rndexp(h.lpf[1], h.lpf[2]))
+      params:set("sh_hipass",  Dice.rndexp(h.hpf[1], h.hpf[2]))
+    end
   end,
   shape = function()
     local c = Dice.pick(Dice.SHAPE)
@@ -2041,6 +2108,11 @@ local DICE = {
         params:set(PID[i].bwidth, w * 100)
       end
     end
+  end,
+  fx = function()
+    local set = function(id, v) params:set(id, v) end
+    Dice.fx_roll(set, fxlocked)
+    Dice.fx_settings(set, fxlocked)
   end
 }
 
@@ -2049,7 +2121,7 @@ local function dice()
   Morph.gesture(function()
     ovr_capture()
     dicing = true
-    for _, k in ipairs({"tune", "motion", "space", "shape"}) do
+    for _, k in ipairs({"tune", "motion", "space", "shape", "fx"}) do
       if rolls(k) and not (k == "tune" and TUNE.orig) then DICE[k]() end
     end
     if rolls("voice") then
@@ -2063,6 +2135,95 @@ local function dice()
     dicing = false
     reseed_voices(true)
   end)
+end
+
+local FXM = {mask = -1, t = 0, mapedit = 5, blocks = {}, mid = {}, at = {}, on = {}, seq = {}, hv = {}, list = {}}
+
+function FXM.build(last)
+  local P = params.params
+  FXM.sa, FXM.clr = P[FXM.first], P[FXM.first + 1]
+  for k = FXM.first + 2, FXM.split - 1 do FXM.mid[#FXM.mid + 1] = P[k] end
+  local i = FXM.split
+  while i <= last do
+    local n, blk = P[i]:get(), {id = P[i].id}
+    for k = 0, n do blk[k + 1] = P[i + k] end
+    FXM.blocks[#FXM.blocks + 1] = blk
+    i = i + n + 1
+  end
+  for k = FXM.first, last do FXM.at[P[k]] = k end
+end
+
+function FXM.top(t)
+  local P, H, tG, n, i = params.params, params.hidden, params.tGROUP, 0, 1
+  while i <= params.count do
+    local p = P[i]
+    if not H[i] then n = n + 1 t[n] = p end
+    i = i + (p.t == tG and p:get() + 1 or 1)
+  end
+  for k = n + 1, #t do t[k] = nil end
+  return t, n
+end
+
+function FXM.order(mask)
+  local P, H, L, at = params.params, params.hidden, params.lookup, FXM.at
+  local M = _menu and _menu.m and _menu.m.PARAMS
+  local key = M and (M.group and "oldpos" or "pos")
+  local cur = M and type(M[key]) == "number" and FXM.top(FXM.list)[M[key] + 1]
+  local grp = M and M.group and type(M.groupid) == "number" and P[M.groupid]
+  local seq, hv, n = FXM.seq, FXM.hv, 0
+  local function put(p) n = n + 1 seq[n], hv[n] = p, H[at[p]] end
+  put(FXM.sa)
+  for pass = 1, 2 do
+    for k, b in ipairs(FXM.blocks) do
+      if ((mask >> (k - 1)) & 1 == 1) == (pass == 1) then
+        for j = 1, #b do put(b[j]) end
+      end
+    end
+    if pass == 1 then
+      put(FXM.clr)
+      for _, p in ipairs(FXM.mid) do put(p) end
+    end
+  end
+  for k = 1, n do
+    local p, i = seq[k], FXM.first + k - 1
+    P[i], H[i], at[p] = p, hv[k], i
+    if p.id then L[p.id] = i end
+  end
+  H[at[FXM.sa]], H[at[FXM.clr]] = mask == 0, mask == 0
+  if grp then M.groupid = at[grp] or M.groupid end
+  if cur and H[at[cur] or 0] then
+    local i, tS, tG = at[cur], params.tSEPARATOR, params.tGROUP
+    repeat
+      i = i + (P[i].t == tG and P[i]:get() + 1 or 1)
+    until P[i] == nil or (not H[i] and P[i].t ~= tS)
+    cur = P[i]
+  end
+  if M and type(M[key]) == "number" then
+    local t, c = FXM.top(FXM.list)
+    local pos = c > 0 and c - 1 or 0
+    if M[key] < pos then pos = M[key] end
+    for k = 1, c do
+      if t[k] == cur then pos = k - 1 break end
+    end
+    M[key] = pos
+  end
+  if _menu and type(_menu.rebuild_params) == "function" then _menu.rebuild_params() end
+end
+
+function FXM.check(now)
+  if FXM.sa == nil or now < FXM.t then return end
+  FXM.t = now + 0.2
+  local M = _menu and _menu.m and _menu.m.PARAMS
+  if menu_up() and (M == nil or M.mode == FXM.mapedit) then return end
+  font.groups(FXM.on)
+  local mask = 0
+  for k, b in ipairs(FXM.blocks) do
+    if FXM.on[b.id] then mask = mask | (1 << (k - 1)) end
+  end
+  if mask ~= FXM.mask then
+    FXM.mask = mask
+    FXM.order(mask)
+  end
 end
 
 local function setup_params()
@@ -2096,6 +2257,7 @@ local function setup_params()
     params:add_control(id, label, controlspec.new(0, 100, "lin", 1, default, "%"))
     eng(id, 0.01)
   end
+  local function fxlock(g) params:add_binary("fxlock_" .. g, "Lock", "toggle", 0) end
   morph_first = #params.params + 1
 
   params:add_separator("  ")
@@ -2105,6 +2267,7 @@ local function setup_params()
     params:add_file(sid, "S" ..i, C.AUDIO_DIR) params:set_action(sid, function(path)
       if path == nil or path == "" or path == "-" then return end
       if path:sub(-1) == "/" then
+        C.fpend[i] = nil
         if S.files[i] then
           clear_voice(i)
           refresh_layout()
@@ -2112,9 +2275,8 @@ local function setup_params()
         end
         return
       end
-      if path == S.files[i] then return end
-      tries[i] = 0
-      load_voice(i, path)
+      if path == (C.fpend[i] or S.files[i]) then return end
+      C.fpend[i] = path
     end)
     params:lookup_param(sid).string = function(p)
       local v = p:get()
@@ -2127,10 +2289,19 @@ local function setup_params()
     end
   end
 
+  FXM.first = #params.params + 1
+  params:add_separator("fx_active", " ")
+  params:add_binary("do_fx_clear", "Clear All", "trigger", 0)
+  params:set_action("do_fx_clear", function(v)
+    if v ~= 1 then return end
+    Undo.mark()
+    Morph.gesture(font.clear)
+    FXM.t = 0
+  end)
   params:add_separator(" ")
 
   params:add_group("grains_main", "VOICES", 16)
-  params:add_control("level", "Level", controlspec.new(DB_FLOOR, C.LEVEL_MAX_DB, "lin", 0.5, -20, "dB"))
+  params:add_control("level", "Level", controlspec.new(DB_FLOOR, C.LEVEL_MAX_DB, "lin", 0.5, C.LEVEL_DEFAULT, "dB"))
   params:add_number("density", "Density", 0, NV * NL, 0) params:set_action("density", function(v) if not layout_busy then local m = DENSP.max dfrac = m > 0 and clamp(v / m, 0, 1) or 0 end push_population() end)
   params:add_binary("pitch_lock", "Original Pitch", "toggle", 0) params:set_action("pitch_lock", function(v)
     TUNE.orig = v == 1
@@ -2147,7 +2318,7 @@ local function setup_params()
   for _, id in ipairs({"motionrate", "pitchrate"}) do
     params:lookup_param(id).string = function(p)
       local v = p:get()
-      return v <= RATE_OFF and "off" or string.format("%.2f x", v)
+      return v <= RATE_OFF and "OFF" or string.format("%.2f x", v)
     end
   end
   params:add_control("reverse", "Reverse Chance", controlspec.new(0, 100, "lin", 1, 10, "%"))
@@ -2164,7 +2335,7 @@ local function setup_params()
     eset("vampLag", Sync.vlag())
     if not Sync.von then push_voices() end
   end
-  params:add_option("vlfo", "Volume LFO", {"off", "on"}, 1)
+  params:add_option("vlfo", "Volume LFO", {"OFF", "ON"}, 1)
   params:set_action("vlfo", function(v)
     Sync.venable(v == 2)
     Shuffle.vol.step = Sync.von and 0.5 or 1
@@ -2178,7 +2349,7 @@ local function setup_params()
   params:add_option("vlfo_sync", "Time Base", {"free", "clock"}, 1) params:set_action("vlfo_sync", function() vlfo_apply() Sync.vis() end)
   params:add_number("vlfo_div", "Division", 1, Sync.NDIV, Sync.DIV_BAR, Sync.vfmt) params:set_action("vlfo_div", vlfo_apply)
   local function rlfo_vis() Sync.rset() Sync.vis() end
-  params:add_option("rlfo", "Region LFO", {"off", "on"}, 1) params:set_action("rlfo", rlfo_vis)
+  params:add_option("rlfo", "Region LFO", {"OFF", "ON"}, 1) params:set_action("rlfo", rlfo_vis)
   params:add_option("rlfo_mode", "Mode", {"scan", "breathe", "orbit"}, 1) params:set_action("rlfo_mode", Sync.rset)
   params:add_option("rlfo_shape", "Shape", Sync.SHAPES, 1) params:set_action("rlfo_shape", Sync.rset)
   params:add_control("rlfo_depth", "Depth", controlspec.new(0, 100, "lin", 1, 50, "%")) params:set_action("rlfo_depth", Sync.rset)
@@ -2204,7 +2375,9 @@ local function setup_params()
     HIDDEN[#HIDDEN + 1] = "vdb" .. i
   end
 
-  params:add_group("grains_reverb", "REVERB", 8)
+  FXM.split = #params.params + 1
+
+  params:add_group("grains_reverb", "REVERB", 9)
   params:add_option("rev_type", "Type", {"plate", "system"}, 1) params:set_action("rev_type", function() rev_route() Sync.vis() end)
   params:add_taper("reverb_mix", "Mix", -40, 18, -40, 0, "dB") params:set_action("reverb_mix", rev_route)
   params:lookup_param("reverb_mix").string = function(p) return fast_db(p:get()) end
@@ -2218,7 +2391,9 @@ local function setup_params()
     params:set("d_series", v, true)
   end)
 
-  params:add_group("grains_delay", "DELAY", 13)
+  fxlock("reverb")
+
+  params:add_group("grains_delay", "DELAY", 14)
   pct("d_mix", "Mix", 0)
   params:add_control("d_time", "Time", controlspec.new(0.02, 5, "exp", 0, 0.5, "s")) params:set_action("d_time", Sync.dly_refresh)
   params:add_option("d_sync", "Time Base", {"free", "clock"}, 1) params:set_action("d_sync", function() Sync.dly_refresh() Sync.vis() end)
@@ -2237,9 +2412,11 @@ local function setup_params()
     params:lookup_param(id).string = function(p) local v = p:get() return v <= 0 and "parallel" or v >= 100 and "series" or string.format("%d%%", floor(v + 0.5)) end
   end
 
-  params:add_group("grains_shimmer", "SHIMMER", 8)
+  fxlock("delay")
+
+  params:add_group("grains_shimmer", "SHIMMER", 9)
   pct("sh_mix", "Mix", 0)
-  params:add_option("sh_mod", "Mix Mod", {"off", "on"}, 1) engopt("sh_mod")
+  params:add_option("sh_mod", "Mix Mod", {"OFF", "ON"}, 1) engopt("sh_mod")
   local SH_OCT = {0.25, 0.5, 1, 2, 4}
   params:add_option("sh_oct", "Pitch Shift", {"-2 oct", "-1 oct", "0", "+1 oct", "+2 oct"}, 4) params:set_action("sh_oct", function(x)
     local v = SH_OCT[x]
@@ -2251,8 +2428,15 @@ local function setup_params()
   params:add_control("sh_fbdelay", "Delay", controlspec.new(0.01, 0.5, "lin", 0.01, 0.2, "s")) eng("sh_fbdelay")
   pct("sh_fb", "Feedback", 20)
 
-  params:add_group("grains_tape", "TAPE", 10)
-  params:add_option("tape_mix", "Tape Sim", {"off", "on"}, 1) engopt("tape_mix")
+  fxlock("shimmer")
+  for _, id in ipairs({"d_mix", "sh_mix"}) do
+    local p = params:lookup_param(id)
+    local str = p.string
+    p.string = function(q) return q:get() <= 0 and "OFF" or str(q) end
+  end
+
+  params:add_group("grains_tape", "TAPE", 11)
+  params:add_option("tape_mix", "Tape Sim", {"OFF", "ON"}, 1) engopt("tape_mix")
   pct("reel_mix", "Saturation", 0)
   pct("shaper_mix", "Shaper Drive", 0)
   pct("wobble_mix", "Wobble", 0)
@@ -2263,42 +2447,59 @@ local function setup_params()
   params:add_control("flutter_var", "Flutter Var", controlspec.new(0.1, 10, "lin", 0.01, 2, "Hz")) eng("flutter_var")
   pct("genloss_mix", "More Tape", 0)
 
+  fxlock("tape")
+
   params:add_group("grains_dimension", "STEREO", 5)
   params:add_control("m_width", "Width", controlspec.new(0, 200, "lin", 1, 100, "%")) eng("m_width", 0.01)
-  params:add_option("haas", "Haas Effect", {"off", "on"}, 1) engopt("haas")
-  params:add_option("binaural", "Binaural Pan", {"off", "on"}, 1) engopt("binaural")
+  params:add_option("haas", "Haas Effect", {"OFF", "ON"}, 1) engopt("haas")
+  params:add_option("binaural", "Binaural Pan", {"OFF", "ON"}, 1) engopt("binaural")
   params:add_taper("rspeed", "Rotation", 0, 1, 0, 1, "Hz") eng("rspeed")
-  params:add_option("limiter", "Output Limiter", {"off", "on"}, 1) engopt("limiter")
+  params:lookup_param("rspeed").string = function(p)
+    local v = p:get()
+    return v <= 0 and "OFF" or string.format(v < 0.1 and "%.3f Hz" or "%.2f Hz", v)
+  end
 
-  params:add_group("grains_chorus", "CHORUS", 4)
+  fxlock("dimension")
+
+  params:add_group("grains_chorus", "CHORUS", 5)
   pct("dimension_mix", "Dimension", 0)
   pct("stchorus_mix", "Stereo Chorus", 0)
   pct("vibe_mix", "Vibe", 0)
   pct("vibe_drift", "Vibe Drift", 50)
 
-  params:add_group("grains_eq", "EQ", 4)
+  fxlock("chorus")
+
+  params:add_group("grains_eq", "EQ", 5)
   params:add_control("eq_low", "Bass", controlspec.new(-20, 20, "lin", 0.5, 0, "dB")) eng("eq_low")
   params:add_control("eq_mid", "Mid", controlspec.new(-20, 20, "lin", 0.5, 0, "dB")) eng("eq_mid")
   params:add_control("eq_high", "Treble", controlspec.new(-20, 20, "lin", 0.5, 0, "dB")) eng("eq_high")
   params:add_control("tilt", "Tilt", controlspec.new(-1, 1, "lin", 0.01, 0, "")) eng("tilt", 12)
 
-  params:add_group("grains_tone", "FILTER", 3)
+  fxlock("eq")
+
+  params:add_group("grains_tone", "FILTER", 4)
   params:add_control("cutoff", "LPF", controlspec.new(20, 20000, "exp", 1, 20000, "Hz"))
   params:add_control("res", "Resonance", controlspec.new(0, 100, "lin", 1, 20, "%"))
   params:add_control("vhpf", "HPF", controlspec.new(20, 800, "exp", 1, 20, "hz"))
 
-  params:add_group("grains_bitcrush", "BITCRUSH", 4)
+  fxlock("tone")
+
+  params:add_group("grains_bitcrush", "BITCRUSH", 5)
   pct("bc_mix", "Mix", 0)
-  params:add_option("bc_mod", "Mix Mod", {"off", "on"}, 1) engopt("bc_mod")
+  params:add_option("bc_mod", "Mix Mod", {"OFF", "ON"}, 1) engopt("bc_mod")
   params:add_taper("bc_rate", "Rate", 1, 48000, 4500, 3, "Hz") eng("bc_rate")
   params:add_taper("bc_bits", "Bits", 1, 24, 14, 1, "") eng("bc_bits")
 
-  params:add_group("grains_wavefold", "WAVEFOLD", 3)
+  fxlock("bitcrush")
+
+  params:add_group("grains_wavefold", "WAVEFOLD", 4)
   pct("wf_mix", "Mix", 0)
   pct("wf_drive", "Drive", 75)
   pct("wf_sym", "Symmetry", 0)
 
-  params:add_group("grains_reso", "RESONATE", 4)
+  fxlock("wavefold")
+
+  params:add_group("grains_reso", "RESONATE", 5)
   params:add_control("reso_mix", "Mix", controlspec.new(0, 100, "lin", 1, 0, "%")) params:set_action("reso_mix", function(v)
     v = v * 0.01
     if esent.reso_mix == v then return end
@@ -2310,12 +2511,16 @@ local function setup_params()
   params:add_number("reso_root", "Root", 24, 128, 28, function() return MusicUtil.note_num_to_name(floor(Reso.root()), true) end) params:set_action("reso_root", Reso.update)
   params:add_option("reso_voicing", "Voicing", Reso.NAMES, Reso.SCALE) params:set_action("reso_voicing", function(v) Reso.voicing(v) Reso.update() end)
 
-  params:add_group("grains_ringmod", "RINGMOD", 3)
+  fxlock("reso")
+
+  params:add_group("grains_ringmod", "RINGMOD", 4)
   pct("ringmod_mix", "Mix", 0)
   params:add_control("ringmod_rate", "Freq", controlspec.new(0.1, 4000, "exp", 0, 800, "Hz")) eng("ringmod_rate")
   pct("ringmod_sweep", "Sweep", 30)
 
-  params:add_group("grains_spiral", "SPIRAL", 7)
+  fxlock("ringmod")
+
+  params:add_group("grains_spiral", "SPIRAL", 8)
   pct("spiral_mix", "Mix", 0)
   params:add_option("spiral_div", "Division", {"1/32", "1/16T", "1/16", "1/8T", "1/8", "1/8.", "1/4", "1/4."}, 5) params:set_action("spiral_div", function(v) engine.spiral_bpm(clock.get_tempo()) engine.spiral_div(({0.125, 1/6, 0.25, 1/3, 0.5, 0.75, 1, 1.5})[v]) end)
   pct("spiral_feedback", "Feedback", 50)
@@ -2327,14 +2532,20 @@ local function setup_params()
   pct("spiral_tone", "Tone", 50)
   clock.tempo_change_handler = function(bpm) engine.spiral_bpm(bpm) end
 
-  params:add_group("grains_sub", "SUB", 2)
+  fxlock("spiral")
+
+  params:add_group("grains_sub", "SUB", 3)
   pct("sub_mix", "Mix", 0)
   pct("sub_detune", "Detune", 65)
 
-  params:add_group("grains_ott", "MULTIBAND", 1)
+  fxlock("sub")
+
+  params:add_group("grains_ott", "MULTIBAND", 2)
   pct("ott_mix", "Comp", 0)
 
-  params:add_group("grains_glitch", "GLITCH", 9)
+  fxlock("ott")
+
+  params:add_group("grains_glitch", "GLITCH", 10)
   params:add_control("gl_ratio", "Glitch", controlspec.new(0, 100, "lin", 1, 0, "%")) params:set_action("gl_ratio", function(v) engine.gl_ratio((v * 0.01) ^ 2) end)
   pct("gl_mix", "Mix", 100)
   params:add_control("gl_min", "Min Length", controlspec.new(10, 500, "lin", 1, 75, "ms")) eng("gl_min", 0.001)
@@ -2344,8 +2555,10 @@ local function setup_params()
   pct("gl_pitch", "Pitch Chance", 0)
   params:add_control("gl_gate", "Gate", controlspec.new(5, 100, "lin", 1, 100, "%")) eng("gl_gate", 0.01)
   pct("gl_decay", "Decay", 0)
+  fxlock("glitch")
+  FXM.build(#params.params)
 
-  params:add_group("grains_gen", "RANDOMIZE", 10)
+  params:add_group("grains_gen", "RANDOMIZE", 11)
   params:add_binary("do_dice", "Randomize!", "trigger", 0) params:set_action("do_dice", function(v) if v == 1 then Undo.mark() dice() end end)
   params:add_binary("do_reseed", "Reseed Voices", "trigger", 0) params:set_action("do_reseed", function(v) if v == 1 then Undo.mark() reseed_voices() end end)
   params:add_binary("do_undo", "Undo", "trigger", 0) params:set_action("do_undo", function(v) if v == 1 then UN.undo() end end)
@@ -2354,6 +2567,7 @@ local function setup_params()
   for _, k in ipairs({"tune", "motion", "space", "shape", "voice"}) do
     params:add_option("lock_" .. k, k, {"roll", "hold"}, 1)
   end
+  params:add_option("lock_fx", "effects", {"roll", "hold"}, 1)
 
   params:add_group("grains_bounds", "PER VOICE", NV * 4)
   for i = 1, NV do
@@ -2375,7 +2589,7 @@ local function setup_params()
   params:add_binary("do_store_a", "Store A", "trigger", 0) params:set_action("do_store_a", function(v) if v == 1 then params:set("morph_auto", 1) Morph.store(1) dirty = true end end)
   params:add_binary("do_store_b", "Store B", "trigger", 0) params:set_action("do_store_b", function(v) if v == 1 then params:set("morph_auto", 1) Morph.store(2) dirty = true end end)
   params:add_binary("do_store_clear", "Clear Morph", "trigger", 0) params:set_action("do_store_clear", function(v) if v == 1 then Morph.clear() dirty = true end end)
-  params:add_option("morph_auto", "LFO", {"off", "on"}, 1) params:set_action("morph_auto", function(v) if v == 2 and params:get("morph_depth") <= 0 then params:set("morph_depth", 100) end Sync.vis() dirty = true end)
+  params:add_option("morph_auto", "LFO", {"OFF", "ON"}, 1) params:set_action("morph_auto", function(v) if v == 2 and params:get("morph_depth") <= 0 then params:set("morph_depth", 100) end Sync.vis() dirty = true end)
   params:add_control("morph_depth", "Depth", controlspec.new(0, 100, "lin", 1, 100, "%"))
   params:add_option("morph_shape", "Shape", Sync.SHAPES, 2)
   params:add_option("morph_sync", "Time Base", {"free", "clock"}, 2) params:set_action("morph_sync", Sync.vis)
@@ -2384,22 +2598,31 @@ local function setup_params()
   params:add_control("morph_slew", "Smoothing", controlspec.new(0, 8, "lin", 0.01, 0.1, "s"))
   params:add_number("morph_seed", "Motion Seed", 1, 9999, 1)
 
-  params:add_group("grains_bounce", "RECORD", 12)
+  params:add_group("grains_bounce", "RECORD", 15)
   params:add_separator("Record Input")
   params:add_control("rec_gain", "Gain", controlspec.new(-24, 24, "lin", 0.5, 0, "dB"))
   params:add_control("rec_max", "Max Time", controlspec.new(2, 60, "lin", 1, 30, "s"))
-  params:add_option("rec_norm", "Normalize", {"off", "-6 dB"}, 2)
+  params:add_option("rec_norm", "Normalize", {"OFF", "-6 dB"}, 2)
   params:add_option("rec_src", "Source", {"stereo", "mono sum", "left", "right"}, 2)
   params:add_control("rec_mon", "Monitor", controlspec.new(DB_FLOOR, 12, "lin", 0.5, 0, "dB"))
   params:lookup_param("rec_mon").string = function(p)
     local v = p:get()
-    return v <= DB_FLOOR and "off" or string.format("%.1f dB", v)
+    return v <= DB_FLOOR and "OFF" or string.format("%.1f dB", v)
   end
   params:add_binary("do_clean_in", "Clean Input Recordings!", "trigger", 0) params:set_action("do_clean_in", function(v) if v == 1 then REC.clean("input") end end)
   params:add_separator("Record Loop")
   params:add_control("bounce_len", "Loop Length", controlspec.new(1, 60, "lin", 0.5, 8, "s"))
   params:add_control("bounce_xf", "Crossfade", controlspec.new(0.1, 5, "lin", 0.1, 1, "s"))
+  params:add_option("rec_lnorm", "Normalize", {"OFF", "-6 dB"}, 2)
   params:add_binary("do_bounce", "RECORD LOOP!", "trigger", 0) params:set_action("do_bounce", function(v) if v == 1 then start_bounce() end if _menu and type(_menu.set_mode) == "function" then _menu.set_mode(false) end end)
+  for _, b in ipairs({{"a", "Active", "active"}, {"n", "New", "new"}}) do
+    params:add_binary("do_bounce_" .. b[1], "BOUNCE to " .. b[2], "trigger", 0)
+    params:set_action("do_bounce_" .. b[1], function(v)
+      if v ~= 1 then return end
+      start_bounce(b[3])
+      if _menu and type(_menu.set_mode) == "function" then _menu.set_mode(false) end
+    end)
+  end
   params:add_binary("do_clean_loop", "Clean Loops!", "trigger", 0) params:set_action("do_clean_loop", function(v) if v == 1 then REC.clean("loop") end end)
 
   params:add_group("grains_hold", "FREEZE / LOCK", NV * 2)
@@ -2461,7 +2684,10 @@ local function setup_params()
     end)
     G[id] = params:get(id)
   end
-  scalar_action("level")
+  params:set_action("level", function(v)
+    local a = v <= DB_FLOOR + 0.5 and 0 or TUNE.amp(v - C.LEVEL_REF)
+    if esent.level ~= a then esent.level = a engine.master(a) end
+  end)
   scalar_action("lspread")
   for _, id in ipairs(SCALARS) do scalar_action(id) end
   scalar_action("tuning", Reso.update)
@@ -2524,7 +2750,7 @@ local function setup_osc()
       local v = (args[1] or 0) + 1
       if v >= 1 and v <= NV then retry_voice(v) end
     elseif path == "/grains/bounce" then
-      bounce_until = 0
+      REC.bounced()
     elseif path == "/grains/rec_level" then
       local l, r = args[1] or 0, args[2] or 0
       REC.level, REC.level_r, REC.metered = l, r, true
@@ -2563,7 +2789,10 @@ function redraw(now)
       matrix.filter(params:get("cutoff"), params:get("res") * 0.01)
     end
   end
-  if bounce_until > 0 then matrix.fxpopup("recording...") end
+  if bounce_until > 0 then
+    local f = REC.bq / REC.steps
+    matrix.fxpopup(f >= 1 and "saving..." or "recording...", f)
+  end
   if REC.state then
     if REC.state == "rec" then
       local clip = REC.level >= 0.99 or REC.level_r >= 0.99
@@ -2573,7 +2802,8 @@ function redraw(now)
           REC.tick > 0 and REC.tick * 0.1 or 0)
       end
       REC.bars[1], REC.bars[2] = REC.frac(REC.level), REC.frac(REC.level_r)
-      matrix.recpopup(clip and "REC  clip" or "REC", REC.sub, REC.bars)
+      matrix.recpopup(clip and "REC  clip" or "REC", REC.sub, REC.bars, nil,
+        (now - REC.t0) / params:get("rec_max"))
     elseif REC.state == "confirm" then
       matrix.recpopup(REC.txt, REC.kind == "loop" and "loops" or "recs",
         nil, "K3 ok    K2 no")
@@ -2676,8 +2906,7 @@ function enc(n, d)
   if k2 and k3 and not k1 then
     local fx = Grid.FX[n]
     params:delta(fx[1], d)
-    local v = params:get(fx[1])
-    pop_show("fx", fx[2] .. ": " .. (n == 1 and fast_db(v) or string.format("%d%%", floor(v + 0.5))))
+    pop_show("fx", fx[2] .. ": " .. C.fxstr(fx[1]))
 
   elseif k1 and k2 and k3 then
     if orig_block() then return end
@@ -2736,14 +2965,14 @@ function enc(n, d)
     elseif n == 2 and k3 then
       params:delta("motionrate", d)
       local v = params:get("motionrate")
-      pop_show("fx", v <= RATE_OFF and "energy: off" or string.format("energy: %.2fx", v))
+      pop_show("fx", v <= RATE_OFF and "energy: OFF" or string.format("energy: %.2fx", v))
     elseif n == 2 then
       local step = coarse("layers", d)
       if step ~= 0 and sel >= 1 then nudge_voice_layers(sel, step) end
     elseif k3 then
       params:delta("pitchrate", d)
       local v = params:get("pitchrate")
-      pop_show("fx", v <= RATE_OFF and "pitch: off" or string.format("pitch: %.2fx", v))
+      pop_show("fx", v <= RATE_OFF and "pitch: OFF" or string.format("pitch: %.2fx", v))
     else
       local step = coarse("voices", d)
       if step ~= 0 then src.nudge_count(step) end
@@ -2803,6 +3032,7 @@ function init()
   params:set("morph_seed", math.random(9999))
   params:bang()
   font.init()
+  FXM.check(util.time())
   refresh_layout()
   Morph.init(morph_first, morph_last, morph_skip)
   UN.build()
@@ -2832,7 +3062,7 @@ function init()
       pop_show("fx", "density: " .. params:string("density"))
     end,
     pop = function(label, id)
-      pop_show("fx", label .. ": " .. params:string(id))
+      pop_show("fx", label .. ": " .. C.fxstr(id))
     end,
     grab = region_grab,
     bounds = function(i, a, w)
@@ -2862,7 +3092,7 @@ function init()
     hold = function(i, lock)
       local id = (lock and "lock_v" or "freeze") .. i
       toggle_param(id)
-      pop_show("fx", (lock and "lock " or "freeze ") .. i .. (params:get(id) == 1 and ": on" or ": off"))
+      pop_show("fx", (lock and "lock " or "freeze ") .. i .. (params:get(id) == 1 and ": ON" or ": OFF"))
     end,
     lfofrac = function(p)
       if params:get(p) ~= 2 then return 0 end
@@ -2879,7 +3109,7 @@ function init()
         params:set(id, v)
         if not on then params:set(p, 2) end
       end
-      pop_show("fx", (p == "rlfo" and "region LFO: " or "vol LFO: ") .. (v <= 0 and "off"
+      pop_show("fx", (p == "rlfo" and "region LFO: " or "vol LFO: ") .. (v <= 0 and "OFF"
         or p == "rlfo" and string.format("%d%%", floor(v + 0.5)) or string.format("%.1f dB", dp:get())))
     end,
     trig = function(top)
@@ -2893,6 +3123,7 @@ function init()
   ui_metro.time = 1 / C.FPS
   ui_metro.event = function()
     local now = util.time()
+    if next(C.fpend) then C.src_flush() end
     ctrl_n = ctrl_n + 1
     if ctrl_n >= C.CTRL_DIV then
       ctrl_n = 0
@@ -2902,6 +3133,7 @@ function init()
     end
     Keys.tick(now)
     if font.tick(now) then dirty = true end
+    FXM.check(now)
     if frz_any then
       blink_n = blink_n + 1
       if blink_n >= C.BLINK_FRAMES then
@@ -2920,9 +3152,14 @@ function init()
         dirty = true
       end
     end
-    if bounce_until > 0 and now >= bounce_until then
-      bounce_until = 0
-      dirty = true
+    if bounce_until > 0 then
+      if now >= bounce_until then
+        bounce_until, REC.bto = 0, nil
+        dirty = true
+      else
+        local q = floor(clamp((now - REC.bt0) / REC.blen, 0, 1) * REC.steps)
+        if q ~= REC.bq then REC.bq = q dirty = true end
+      end
     end
     if REC.state then
       if REC.state == "rec" then
