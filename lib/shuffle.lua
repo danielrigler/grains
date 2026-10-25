@@ -50,38 +50,45 @@ function E:kick(d)
   mark()
 end
 
-function E:nudge(i, d)
+function E:nudge(i, d, others)
+  local a, b, skip = i, i, 0
+  if others then a, b, skip = 1, nvoices(), i end
+  local ids = self.ids
   if self.move then
-    local id = self.ids[i]
-    local v = self.move(params:get(id), d)
-    params:set(id, max(self.lo, min(self.hi, v)))
+    for j = a, b do
+      if j ~= skip then
+        local id = ids[j]
+        params:set(id, max(self.lo, min(self.hi, self.move(params:get(id), d))))
+      end
+    end
     mark()
     return
   end
-  local ids, sh, at = self.ids, self.shadow, self.at
+  local sh, at = self.shadow, self.at
   local lo, hi, k = self.emin, self.emax, self.slack
-  local n = nvoices()
-  if i > n then n = i end
   local mx, mn = -1e30, 1e30
-  for j = 1, n do
-    local cur = params:get(ids[j])
-    local v = sh[j]
-    if at[j] ~= cur then v = cur sh[j] = cur at[j] = cur end
-    if j == i then
-      v = v + d * (self.step or 1)
+  for j = a, b do
+    if j ~= skip then
+      local cur = params:get(ids[j])
+      if at[j] ~= cur then sh[j], at[j] = cur, cur end
+      local v = sh[j]
+      if v > mx then mx = v end
+      if v < mn then mn = v end
+    end
+  end
+  if mx < mn then return end
+  local off = ((mx < lo and lo - mx) or (mn > hi and hi - mn) or 0) + d * (self.step or 1)
+  mx, mn = mx + off, mn + off
+  off = off + ((mx < lo and lo - mx) or (mn > hi and hi - mn) or 0)
+  for j = a, b do
+    if j ~= skip then
+      local v = sh[j] + off
       if v < lo - k then v = lo - k elseif v > hi + k then v = hi + k end
       sh[j] = v
+      params:set(ids[j], max(lo, min(hi, v)))
+      at[j] = params:get(ids[j])
     end
-    if v > mx then mx = v end
-    if v < mn then mn = v end
   end
-  local off = (mx < lo and lo - mx) or (mn > hi and hi - mn) or 0
-  if off ~= 0 then
-    for j = 1, n do sh[j] = sh[j] + off end
-  end
-  local v = sh[i]
-  params:set(ids[i], max(lo, min(hi, v)))
-  at[i] = params:get(ids[i])
   mark()
 end
 

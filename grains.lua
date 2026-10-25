@@ -2951,9 +2951,7 @@ function enc(n, d)
     if n == 2 then
       sh:nudge(sel, d)
     elseif n == 3 then
-      for i = 1, nva do
-        if i ~= sel then sh:nudge(i, d) end
-      end
+      sh:nudge(sel, d, true)
     end
 
   elseif k1 then
