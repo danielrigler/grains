@@ -1,366 +1,152 @@
-local font = {}
-
-local micro_font = {
-  D = {{1,1,0},{1,0,1},{1,1,0}},
-  B = {{1,1,0},{0,1,1},{0,0,1}},
-  L = {{1,0},{1,0},{1,1}},
-  C = {{1,1,1},{1,0,0},{1,1,1}},
-  c = {{1,1},{1,0},{1,1}},
-  G = {{1,1,0},{1,0,1},{1,1,1}},
-  E = {{1,1,1},{1,1,0},{1,1,1}},
-  I = {{1},{1},{1}},
-  R = {{1,1,1},{1,1,0},{1,0,1}},
-  T = {{1,1,1},{0,1,0},{0,1,0}},
-  S = {{0,1,1},{0,1,0},{1,1,0}},
-  X = {{0,1,1,1,0,1},{0,1,0,1,1,1},{1,1,0,1,0,1}},
-  V = {{0,0,1},{1,1,1},{1,1,1}},
-  H = {{1,0,1},{1,1,1},{1,0,1}},
-  Z = {{0,1,1,1,1},{0,1,0,1,0},{1,1,0,1,0}},
-  F = {{1,1,1},{1,1,0},{1,0,0}},
-  P = {{1,1,1},{1,1,1},{1,0,0}},
-  O = {{1,1,1},{1,0,1},{1,1,1}},
-  W = {{1,0,1},{1,1,1},{1,1,1}},
-  M = {{1,0,1},{0,1,0},{1,0,1}},
-  K = {{0,1,0},{1,0,1},{0,1,0}},
-  A = {{0,0,1},{0,1,1},{1,1,1}},
-  N = {{1,1,1},{1,0,1},{1,0,1}},
-  U = {{1,0,1},{1,0,1},{1,1,1}}
-}
-
-local micro_font_by_byte = {}
-for ch, glyph in pairs(micro_font) do micro_font_by_byte[ch:byte()] = glyph end
+local F = {n = 0, ver = 0, runs = {}}
 
 local floor, max, abs, log = math.floor, math.max, math.abs, math.log
 
-local function plot_text(plot, x, y, text, level)
-  local cursor_x = x
-  local level_is_fn = type(level) == "function"
-  for i = 1, #text do
-    local glyph = micro_font_by_byte[text:byte(i)]
-    if glyph then
-      local w = #glyph[1]
-      for row = 1, 3 do
-        for col = 1, w do
-          if glyph[row][col] == 1 then
-            local lvl = level
-            if level_is_fn then lvl = level(row, col) end
-            plot(lvl or 1, cursor_x + col - 1, y + row - 1)
-          end
-        end
-      end
-      cursor_x = cursor_x + w + 1
-    else
-      cursor_x = cursor_x + 3
-    end
-  end
-  return cursor_x
-end
-
-local fx = {
-  reverb_mix    = -40,
-  d_mix         = 0,
-  sh_mix        = 0,
-  sh_mod        = 1,
-  bc_mix        = 0,
-  bc_mod        = 1,
-  wf_mix        = 0,
-  reso_mix      = 0,
-  gl_ratio      = 0,
-  gl_mix        = 100,
-  tape_mix      = 1,
-  shaper_mix    = 0,
-  wobble_mix    = 0,
-  reel_mix      = 0,
-  genloss_mix   = 0,
-  ringmod_mix   = 0,
-  spiral_mix    = 0,
-  sub_mix       = 0,
-  ott_mix       = 0,
-  stchorus_mix  = 0,
-  m_width       = 100,
-  dimension_mix = 0,
-  vibe_mix      = 0,
-  haas          = 1,
-  binaural      = 1,
-  rspeed        = 0,
-  eq_low        = 0,
-  eq_mid        = 0,
-  eq_high       = 0,
-  tilt          = 0,
-  cutoff        = 20000,
-  vhpf          = 20,
-  d_sync        = 1,
-  morph_auto    = 1,
-  morph_sync    = 2,
-  vlfo          = 1,
-  vlfo_sync     = 1
+local GLYPH = {
+  K = {"010", "101", "010"}, F = {"111", "110", "100"}, E = {"111", "110", "111"}, B = {"110", "011", "001"},
+  O = {"111", "101", "111"}, W = {"101", "111", "111"}, M = {"101", "010", "101"}, U = {"101", "101", "111"},
+  c = {"11", "10", "11"}, S = {"011", "010", "110"}, G = {"110", "101", "111"}, T = {"111", "010", "010"},
+  X = {"011101", "010111", "110101"}, D = {"110", "101", "110"}, R = {"111", "110", "101"},
+  Z = {"01111", "01010", "11010"}, C = {"111", "100", "111"}
 }
 
-local watched, wobj, nwatched = {}, {}, 0
+local IDS = {"reverb_mix", "d_mix", "sh_mix", "sh_mod", "bc_mix", "bc_mod", "wf_mix", "reso_mix", "gl_ratio", "gl_mix",
+  "tape_mix", "shaper_mix", "wobble_mix", "reel_mix", "genloss_mix", "ringmod_mix", "spiral_mix", "sub_mix", "ott_mix",
+  "stchorus_mix", "m_width", "dimension_mix", "vibe_mix", "haas", "binaural", "rspeed", "eq_low", "eq_mid", "eq_high",
+  "tilt", "cutoff", "vhpf", "d_sync", "morph_auto", "morph_sync", "vlfo", "vlfo_sync"}
 
-local function poll()
-  for i = 1, nwatched do
-    fx[watched[i]] = wobj[i]:get()
-  end
-end
+local fx, objs = {}, {}
+local function poll() for i, id in ipairs(IDS) do fx[id] = objs[i]:get() end end
 
-function font.init()
-  local n = 0
-  for id in pairs(fx) do
-    if params.lookup[id] then
-      n = n + 1
-      watched[n], wobj[n] = id, params:lookup_param(id)
-    end
-  end
-  for k = n + 1, nwatched do watched[k], wobj[k] = nil, nil end
-  nwatched = n
-  poll()
-end
-
-local BINARY_ON = 25
-
-local function value_to_level(val)
-  if val < 0 then val = 0 elseif val > 100 then val = 100 end
-  return 1 + floor((val / 100) * 14)
-end
-
-local _LPF_INV = 1 / log(20000 / 20)
-local _HPF_INV = 1 / log(800 / 20)
-
-local function lpf_norm(freq)
-  local f = freq < 20 and 20 or (freq > 20000 and 20000 or freq)
-  return log(f / 20) * _LPF_INV
-end
-
-local function hpf_norm(freq)
-  local f = freq < 20 and 20 or (freq > 800 and 800 or freq)
-  return log(f / 20) * _HPF_INV
-end
-
-local function filter_active(c)
-  return c.cutoff < 19999 or c.vhpf > 20.1
-end
-
-local function filter_intensity(c)
-  return max(1 - lpf_norm(c.cutoff), hpf_norm(c.vhpf)) * 100
-end
-
-local function eq_dev(c)
-  local d = max(abs(c.eq_low), abs(c.eq_mid), abs(c.eq_high)) / 20
-  local t = abs(c.tilt)
-  return max(d, t)
-end
-
-local function eq_active(c)
-  return eq_dev(c) > 0.01
-end
-
-local function eq_intensity(c)
-  return eq_dev(c) * 100
-end
-
-local function tape_active(c)
-  return c.tape_mix == 2 or c.shaper_mix > 0 or c.wobble_mix > 0 or c.reel_mix > 0 or c.genloss_mix > 0
-end
-
-local function tape_intensity(c)
-  local v = c.tape_mix == 2 and BINARY_ON or 0
-  if c.shaper_mix > v then v = c.shaper_mix end
-  if c.wobble_mix > v then v = c.wobble_mix end
-  if c.reel_mix > v then v = c.reel_mix end
-  if c.genloss_mix > v then v = c.genloss_mix end
-  return v
-end
-
-local function stereo_active(c)
-  return c.m_width ~= 100 or c.haas == 2 or c.binaural == 2 or c.rspeed > 0
-end
-
-local function stereo_intensity(c)
-  local w = abs(c.m_width - 100) / 100
-  local h = (c.haas == 2 or c.binaural == 2) and (BINARY_ON / 100) or 0
-  return max(w, h, c.rspeed) * 100
-end
-
-local CLOCK_ORDER = {{1, 2}, {2, 3}, {3, 2}, {2, 1}}
-local CLOCK_DIM, CLOCK_LIT, CLOCK_STEPS = 3, 15, 4
-local _clk, _clk_pos, _clk_r, _clk_c = false, -1, 1, 2
-
-local function clock_active(c)
-  return (c.d_sync == 2 and c.d_mix > 0)
-      or (c.morph_auto == 2 and c.morph_sync == 2)
-      or (c.vlfo == 2 and c.vlfo_sync == 2)
-end
-
-local _get_beats
-do
-  local c = rawget(_G, "clock")
-  _get_beats = c and c.get_beats
-  if _get_beats and not pcall(_get_beats) then _get_beats = nil end
-end
-
+local get_beats = rawget(_G, "clock") and clock.get_beats
+if get_beats and not pcall(get_beats) then get_beats = nil end
 local function clock_pos()
-  if _get_beats == nil then return 0 end
-  local b = _get_beats()
-  if type(b) ~= "number" then return 0 end
-  return floor(b) % CLOCK_STEPS
+  local b = get_beats and get_beats()
+  return type(b) == "number" and floor(b) % 4 or 0
 end
 
-local function clock_level(row, col)
-  if row == _clk_r and col == _clk_c then return CLOCK_LIT end
-  return CLOCK_DIM
-end
-
-local function clock_custom()
-  local p = CLOCK_ORDER[_clk_pos + 1]
-  if p then _clk_r, _clk_c = p[1], p[2] end
-  return clock_level
-end
-
-local MOD_FREQ = 0.25
-local MOD_PERIOD = 1 / MOD_FREQ
-local _draw_now = 0
-
-local function make_mix_mod()
-  local cur, nxt = math.random(), math.random()
-  local seg_start = util.time()
+local function mixmod()
+  local cur, nxt, t0 = math.random(), math.random(), util.time()
   return function(now)
-    local t = now - seg_start
-    if t >= MOD_PERIOD then
-      repeat
-        cur, nxt = nxt, math.random()
-        seg_start = seg_start + MOD_PERIOD
-        t = now - seg_start
-      until t < MOD_PERIOD
-    end
-    return cur + (nxt - cur) * (t * MOD_FREQ)
+    while now - t0 >= 4 do cur, nxt, t0 = nxt, math.random(), t0 + 4 end
+    return cur + (nxt - cur) * (now - t0) * 0.25
   end
 end
+local bc_lfo, sh_lfo, now_t = mixmod(), mixmod(), 0
 
-local _bc_lfo = make_mix_mod()
-local _sh_lfo = make_mix_mod()
+local LPF, HPF = 1 / log(1000), 1 / log(40)
+local function eqdev(c) return max(max(abs(c.eq_low), abs(c.eq_mid), abs(c.eq_high)) / 20, abs(c.tilt)) end
+local function mix(id) return {function(c) return c[id] > 0 end, function(c) return c[id] end} end
+local function clock_on(c)
+  return (c.d_sync == 2 and c.d_mix > 0) or (c.morph_auto == 2 and c.morph_sync == 2) or (c.vlfo == 2 and c.vlfo_sync == 2)
+end
 
-local FX_SPECS = {
-  {glyph = "K", show = clock_active,                                custom_level = clock_custom},
-  {glyph = "F", grp = "grains_tone",      show = filter_active,                              val = filter_intensity},
-  {glyph = "E", grp = "grains_eq",        show = eq_active,                                  val = eq_intensity},
-  {glyph = "B", grp = "grains_bitcrush",  show = function(c) return c.bc_mix > 0 end,         val = function(c) return c.bc_mod == 2 and c.bc_mix * _bc_lfo(_draw_now) or c.bc_mix end},
-  {glyph = "O", grp = "grains_reso",      show = function(c) return c.reso_mix > 0 end,       val = function(c) return c.reso_mix end},
-  {glyph = "W", grp = "grains_wavefold",  show = function(c) return c.wf_mix > 0 end,         val = function(c) return c.wf_mix end},
-  {glyph = "M", grp = "grains_ringmod",   show = function(c) return c.ringmod_mix > 0 end,   val = function(c) return c.ringmod_mix end},
-  {glyph = "U", grp = "grains_sub",       show = function(c) return c.sub_mix > 0 end,       val = function(c) return c.sub_mix end},
-  {glyph = "c", grp = "grains_ott",       show = function(c) return c.ott_mix > 0 end,       val = function(c) return c.ott_mix end},
-  {glyph = "S", grp = "grains_spiral",    show = function(c) return c.spiral_mix > 0 end,    val = function(c) return c.spiral_mix end},
-  {glyph = "G", grp = "grains_glitch",    show = function(c) return c.gl_ratio > 0 and c.gl_mix > 0 end, val = function(c) return c.gl_ratio end},
-  {glyph = "T", grp = "grains_tape",      show = tape_active,                                val = tape_intensity},
-  {glyph = "X", grp = "grains_shimmer",   show = function(c) return c.sh_mix > 0 end,        val = function(c) return c.sh_mod == 2 and c.sh_mix * _sh_lfo(_draw_now) or c.sh_mix end},
-  {glyph = "D", grp = "grains_delay",     show = function(c) return c.d_mix > 0 end,         val = function(c) return c.d_mix end},
-  {glyph = "R", grp = "grains_reverb",    show = function(c) return c.reverb_mix > -40 end,  val = function(c) return util.linlin(-40, 18, 0, 100, c.reverb_mix) end},
-  {glyph = "Z", grp = "grains_dimension", show = stereo_active,                              val = stereo_intensity},
-  {glyph = "C", grp = "grains_chorus",    show = function(c) return c.dimension_mix > 0 or c.stchorus_mix > 0 or c.vibe_mix > 0 end, val = function(c) return max(c.dimension_mix, c.stchorus_mix, c.vibe_mix) end}
+local SPECS = {
+  {"K", nil, clock_on},
+  {"F", "grains_tone", function(c) return c.cutoff < 19999 or c.vhpf > 20.1 end,
+    function(c) return max(1 - log(math.min(max(c.cutoff, 20), 20000) / 20) * LPF, log(math.min(max(c.vhpf, 20), 800) / 20) * HPF) * 100 end},
+  {"E", "grains_eq", function(c) return eqdev(c) > 0.01 end, function(c) return eqdev(c) * 100 end},
+  {"B", "grains_bitcrush", mix("bc_mix")[1], function(c) return c.bc_mod == 2 and c.bc_mix * bc_lfo(now_t) or c.bc_mix end},
+  {"O", "grains_reso", table.unpack(mix("reso_mix"))},
+  {"W", "grains_wavefold", table.unpack(mix("wf_mix"))},
+  {"M", "grains_ringmod", table.unpack(mix("ringmod_mix"))},
+  {"U", "grains_sub", table.unpack(mix("sub_mix"))},
+  {"c", "grains_ott", table.unpack(mix("ott_mix"))},
+  {"S", "grains_spiral", table.unpack(mix("spiral_mix"))},
+  {"G", "grains_glitch", function(c) return c.gl_ratio > 0 and c.gl_mix > 0 end, function(c) return c.gl_ratio end},
+  {"T", "grains_tape", function(c) return c.tape_mix == 2 or c.shaper_mix > 0 or c.wobble_mix > 0 or c.reel_mix > 0 or c.genloss_mix > 0 end,
+    function(c) return max(c.tape_mix == 2 and 25 or 0, c.shaper_mix, c.wobble_mix, c.reel_mix, c.genloss_mix) end},
+  {"X", "grains_shimmer", mix("sh_mix")[1], function(c) return c.sh_mod == 2 and c.sh_mix * sh_lfo(now_t) or c.sh_mix end},
+  {"D", "grains_delay", table.unpack(mix("d_mix"))},
+  {"R", "grains_reverb", function(c) return c.reverb_mix > -40 end, function(c) return (c.reverb_mix + 40) / 58 * 100 end},
+  {"Z", "grains_dimension", function(c) return c.m_width ~= 100 or c.haas == 2 or c.binaural == 2 or c.rspeed > 0 end,
+    function(c) return max(abs(c.m_width - 100) / 100, (c.haas == 2 or c.binaural == 2) and 0.25 or 0, c.rspeed) * 100 end},
+  {"C", "grains_chorus", function(c) return c.dimension_mix > 0 or c.stchorus_mix > 0 or c.vibe_mix > 0 end,
+    function(c) return max(c.dimension_mix, c.stchorus_mix, c.vibe_mix) end}
 }
-
-local NFX = #FX_SPECS
-for i = 1, NFX do
-  local spec = FX_SPECS[i]
-  local g = micro_font_by_byte[spec.glyph:byte()]
-  spec.w = (g and #g[1] or 3) + 1
-end
-
-local RIGHT_EDGE, Y0 = 127, 61
-local UPDATE_INTERVAL = 1 / 5
-
-local _pl, _px, _py, _pn = {}, {}, {}, 0
-local _n, _changed = 0, false
-local _last_update = -1
-local _shown, _level = {}, {}
-
-local function collect(level, x, y)
-  local n = _n + 1
-  _n = n
-  if _pl[n] ~= level or _px[n] ~= x or _py[n] ~= y then
-    _pl[n], _px[n], _py[n] = level, x, y
-    _changed = true
-  end
-end
-
-function font.tick(now)
-  if now - _last_update >= UPDATE_INTERVAL then
-    _last_update = now
-    _draw_now = now
-    poll()
-    _clk = clock_active(fx)
-  elseif _clk then
-    if clock_pos() == _clk_pos then return false end
-  else
-    return false
-  end
-  _clk_pos = _clk and clock_pos() or -1
-  local shown, width = 0, 0
-  for i = 1, NFX do
-    local spec = FX_SPECS[i]
-    if spec.show(fx) then
-      shown = shown + 1
-      _shown[shown] = spec.glyph
-      _level[shown] = spec.custom_level and spec.custom_level() or value_to_level(spec.val(fx))
-      width = width + spec.w
-    end
-  end
-  if width > 0 then width = width - 1 end
-  _n, _changed = 0, false
-  local x = RIGHT_EDGE + 1 - width
-  if x < 0 then x = 0 end
-  for i = 1, shown do
-    x = plot_text(collect, x, Y0, _shown[i], _level[i])
-  end
-  if _n ~= _pn then
-    _pn = _n
-    _changed = true
-  end
-  return _changed
-end
 
 local OFF = {
-  F = {cutoff = 20000, vhpf = 20},
-  E = {eq_low = 0, eq_mid = 0, eq_high = 0, tilt = 0},
-  B = {bc_mix = 0},
-  O = {reso_mix = 0},
-  W = {wf_mix = 0},
-  M = {ringmod_mix = 0},
-  U = {sub_mix = 0},
-  c = {ott_mix = 0},
-  S = {spiral_mix = 0},
-  G = {gl_ratio = 0},
+  F = {cutoff = 20000, vhpf = 20}, E = {eq_low = 0, eq_mid = 0, eq_high = 0, tilt = 0}, B = {bc_mix = 0},
+  O = {reso_mix = 0}, W = {wf_mix = 0}, M = {ringmod_mix = 0}, U = {sub_mix = 0}, c = {ott_mix = 0},
+  S = {spiral_mix = 0}, G = {gl_ratio = 0}, X = {sh_mix = 0}, D = {d_mix = 0}, R = {reverb_mix = -40},
   T = {tape_mix = 1, shaper_mix = 0, wobble_mix = 0, reel_mix = 0, genloss_mix = 0},
-  X = {sh_mix = 0},
-  D = {d_mix = 0},
-  R = {reverb_mix = -40},
-  Z = {m_width = 100, haas = 1, binaural = 1, rspeed = 0},
-  C = {dimension_mix = 0, stchorus_mix = 0, vibe_mix = 0}
+  Z = {m_width = 100, haas = 1, binaural = 1, rspeed = 0}, C = {dimension_mix = 0, stchorus_mix = 0, vibe_mix = 0}
 }
 
-function font.groups(on)
+local CLOCK_AT = {{1, 2}, {2, 3}, {3, 2}, {2, 1}}
+local last, clk, clk_pos = -1, false, -1
+local buf, shown = {}, {}
+
+function F.init()
+  for i, id in ipairs(IDS) do objs[i] = params:lookup_param(id) end
   poll()
-  for i = 1, NFX do
-    local s = FX_SPECS[i]
-    if s.grp then on[s.grp] = s.show(fx) end
-  end
 end
 
-function font.clear()
-  poll()
-  for i = 1, NFX do
-    local s = FX_SPECS[i]
-    local off = OFF[s.glyph]
-    if off and s.show(fx) then
-      for id, v in pairs(off) do params:set(id, v) end
+local function emit(n, l, x, y, w)
+  buf[n + 1], buf[n + 2], buf[n + 3], buf[n + 4] = l, x, y, w
+  return n + 4
+end
+
+function F.tick(now)
+  if now - last >= 0.2 then
+    last, now_t = now, now
+    poll()
+    clk = clock_on(fx)
+  elseif not clk or clock_pos() == clk_pos then
+    return false
+  end
+  clk_pos = clk and clock_pos() or -1
+  local ns, width, at = 0, -1, CLOCK_AT[clk_pos + 1] or CLOCK_AT[1]
+  for _, s in ipairs(SPECS) do
+    if s[3](fx) then
+      ns = ns + 1
+      shown[ns] = s
+      width = width + #GLYPH[s[1]][1] + 1
     end
   end
+  local x, n = math.max(128 - width, 0), 0
+  for k = 1, ns do
+    local s = shown[k]
+    local g = GLYPH[s[1]]
+    local lv = s[4] and 1 + floor(math.min(max(s[4](fx), 0), 100) * 0.14)
+    local cr, cc = at[1], at[2]
+    for row = 1, 3 do
+      local r, col = g[row], 1
+      while col <= #r do
+        if r:byte(col) == 49 then
+          local l = lv or ((row == cr and col == cc) and 15 or 3)
+          local e = col
+          while lv and r:byte(e + 1) == 49 do e = e + 1 end
+          n = emit(n, l, x + col - 1, 60 + row, e - col + 1)
+          col = e
+        end
+        col = col + 1
+      end
+    end
+    x = x + #g[1] + 1
+  end
+  local changed = n ~= F.n
+  if not changed then
+    local r = F.runs
+    for k = 1, n do if r[k] ~= buf[k] then changed = true break end end
+  end
+  if changed then
+    F.runs, buf, F.n, F.ver = buf, F.runs, n, F.ver + 1
+  end
+  return changed
 end
 
-function font.draw(plot)
-  local l, x, y = _pl, _px, _py
-  for i = 1, _pn do plot(l[i], x[i], y[i]) end
+function F.groups(on)
+  poll()
+  for _, s in ipairs(SPECS) do if s[2] then on[s[2]] = s[3](fx) end end
 end
 
-return font
+function F.clear()
+  poll()
+  for _, s in ipairs(SPECS) do
+    local off = OFF[s[1]]
+    if off and s[3](fx) then for id, v in pairs(off) do params:set(id, v) end end
+  end
+end
+
+return F

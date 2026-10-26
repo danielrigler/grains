@@ -1,763 +1,404 @@
-local M = {}
+local M = {RAW = 128, NMAX = 6}
 
-M.RAW = 128
-M.NMAX = 6
-
-local floor, exp, abs, log, sqrt = math.floor, math.exp, math.abs, math.log, math.sqrt
-
-local clamp = include("grains/lib/util").clamp
-
-local TOP = 0
-local ROW2 = 32
+local floor, exp, abs, log, sqrt, min, max = math.floor, math.exp, math.abs, math.log, math.sqrt, math.min, math.max
+local function clamp(x, lo, hi) return x < lo and lo or x > hi and hi or x end
 
 local LAYOUTS = {
-  {w = 128, h = 62, cx = {0},                    cy = {TOP}},
-  {w = 62,  h = 62, cx = {0, 65},                cy = {TOP, TOP}},
-  {w = 62,  h = 30, cx = {0, 65, 0},             cy = {TOP, TOP, ROW2}},
-  {w = 62,  h = 30, cx = {0, 65, 0, 65},         cy = {TOP, TOP, ROW2, ROW2}},
-  {w = 40,  h = 30, cx = {0, 43, 86, 0, 43},     cy = {TOP, TOP, TOP, ROW2, ROW2}},
-  {w = 40,  h = 30, cx = {0, 43, 86, 0, 43, 86}, cy = {TOP, TOP, TOP, ROW2, ROW2, ROW2}}
+  {128, 62, {0}, {0}},
+  {62, 62, {0, 65}, {0, 0}},
+  {62, 30, {0, 65, 0}, {0, 0, 32}},
+  {62, 30, {0, 65, 0, 65}, {0, 0, 32, 32}},
+  {40, 30, {0, 43, 86, 0, 43}, {0, 0, 0, 32, 32}},
+  {40, 30, {0, 43, 86, 0, 43, 86}, {0, 0, 0, 32, 32, 32}}
 }
 
-local CW, CH, WH
-local CX, CY
-local WALL_TOP, WALL_BOT, WALL_ROWS
-local WAVE_DY
-local PITCH_CENTER_DY, PITCH_HALF_ROWS
-local RAILS
-local NCELL = -1
-local WALL = 15
-local BASE = 1
-local SEL_LIFT = 5
-local FAINT_LEVEL = 3
-local OVERLAP_STEP = 2
-local END_LVL = 13
-local CAP_HALF_MAX = 2
-local LOCK_ARM = 3
-local LMAX = 16
+local WALL, LIFT, FAINT, ENDL, ARM, LMAX = 15, 5, 3, 13, 3, 16
+local CW, CH, CX, CY, BOT, ROWS, WDY, WH, IH, PHALF
+local NCELL, GEN, RAILS = -1, 0, {}
 
 local function ramp(nl, lo, hi, base)
-  local step = OVERLAP_STEP
+  local step = 2
   if nl > 1 and (hi - lo) / (nl - 1) < step then step = (hi - lo) / (nl - 1) end
   local t = {[0] = base}
-  for c = 1, LMAX do
-    local lv = floor(lo + step * ((c > nl and nl or c) - 1) + 0.5)
-    t[c] = lv > WALL and WALL or lv
-  end
+  for c = 1, LMAX do t[c] = min(floor(lo + step * (min(c, nl) - 1) + 0.5), WALL) end
   return t
 end
 
-local FULL_CELLS = 1
-local LVLS_DIM, LVLS_SEL, LVLS_FULL = {}, {}, {}
+local DIM, SEL, FULL = {}, {}, {}
 for nl = 1, LMAX do
-  LVLS_DIM[nl]  = ramp(nl, FAINT_LEVEL, WALL - SEL_LIFT, BASE)
-  LVLS_SEL[nl]  = ramp(nl, FAINT_LEVEL + SEL_LIFT, WALL, BASE + SEL_LIFT)
-  LVLS_FULL[nl] = ramp(nl, FAINT_LEVEL, WALL, BASE)
+  DIM[nl] = ramp(nl, FAINT, WALL - LIFT, 1)
+  SEL[nl] = ramp(nl, FAINT + LIFT, WALL, 1 + LIFT)
+  FULL[nl] = ramp(nl, FAINT, WALL, 1)
 end
 
-local function tanh(z) local e = exp(2 * z) return (e - 1) / (e + 1) end
+local s_level, s_rect, s_fill, s_img, s_draw
+local IMG, DOT, ICON, icon_ver, icon_x = false, {}, nil, -1, 0
+local Q, QN = {}, {}
+for l = 1, 15 do Q[l], QN[l] = {}, 0 end
 
-local TILT_P, TILT_W = 0.53, 0.30
-local TILT_CURVE = {}
-local TILT_CURVE_MAX, TILT_CURVE_MIN = -math.huge, math.huge
-for c = 0, 127 do
-  local v = tanh((c / 127 - TILT_P) / TILT_W)
-  TILT_CURVE[c] = v
-  if v > TILT_CURVE_MAX then TILT_CURVE_MAX = v end
-  if v < TILT_CURVE_MIN then TILT_CURVE_MIN = v end
+local function R(l, x, y, w, h)
+  if w <= 0 or h <= 0 or l < 1 then return end
+  local n, q = QN[l], Q[l]
+  q[n + 1], q[n + 2], q[n + 3], q[n + 4] = x, y, w, h
+  QN[l] = n + 4
 end
-local CURVE_TOP, CURVE_BOT = 0, 58
-local TILT_AMP = (CURVE_BOT - CURVE_TOP) / (TILT_CURVE_MAX - TILT_CURVE_MIN)
-local TILT_CY = CURVE_TOP + (TILT_CURVE_MAX * TILT_AMP)
 
-local FILT_AMP = CURVE_BOT - CURVE_TOP
-local FILT_LOGN = 1 / log(1000)
-local FILT_K = 0.35
-local FILT_Q_LO, FILT_Q_HI, FILT_Q_EXP = 0.707, 4, 1.3
-local FILT_IQ_HI = 1 / (FILT_Q_HI * FILT_Q_HI)
-local FILT_FMAX = 1 / (1 + FILT_K * sqrt(FILT_IQ_HI * (1 - 0.25 * FILT_IQ_HI)))
-local FILT_OCT = {}
-for d = -127, 127 do FILT_OCT[d] = exp(2 * log(1000) / 127 * d) end
-
-local cover, cdif = {}, {}
-local lc0, lc1, lcok = {}, {}, {}
-local COV, KC0, KC1, KOK, KNL = {}, {}, {}, {}, {}
-for v = 1, M.NMAX do
-  COV[v], KC0[v], KC1[v], KOK[v], KNL[v] = {}, {}, {}, {}, -1
+local function flush()
+  for l = 1, 15 do
+    local n = QN[l]
+    if n > 0 then
+      local q = Q[l]
+      s_level(l)
+      for k = 1, n, 4 do s_rect(q[k], q[k + 1], q[k + 2], q[k + 3]) end
+      s_fill()
+      QN[l] = 0
+    end
+  end
 end
-local LVL = LVLS_FULL[1]
-local TL, BL = {}, {}
 
-local s_level, s_rect, s_fill
-local xfp, xfw, xfx, xfy
-local s_wf, s_on, s_loaded, s_nl, s_ls, s_le, s_pos
-local s_b0, s_b1, s_volf, s_pitchf, s_frz, s_lck
-local s_sel, s_blink
-local lastlevel = -1
-local pending = false
-local WL, s_draw_to
-local wl_clr = true
-local WKW, WKL, WKS, WKF, CNL, CLVL, KIND, DL = {}, {}, {}, {}, {}, {}, {}, {}
-local ND = 0
+function M.bind()
+  s_level, s_rect, s_fill = screen.level, screen.rect, screen.fill
+  s_img, s_draw = screen.display_image_region, screen.draw_to
+  IMG = pcall(function()
+    for _, l in ipairs({WALL, 7}) do
+      local im = assert(screen.create_image(1, 64))
+      s_draw(im, function()
+        s_level(l)
+        for y = 0, 63, 2 do s_rect(0, y, 1, 1) end
+        s_fill()
+      end)
+      DOT[l] = im
+    end
+  end) and s_img ~= nil
+end
 
 function M.set_count(n)
   n = clamp(floor(n or 0), 0, M.NMAX)
   if n == NCELL then return false end
-  NCELL = n
-  local L = LAYOUTS[n < 1 and 1 or n]
-  CW, CH, CX, CY = L.w, L.h, L.cx, L.cy
-  WALL_TOP, WALL_BOT = 0, CH - 4
-  WALL_ROWS = WALL_BOT - WALL_TOP + 1
-  WAVE_DY = floor((WALL_TOP + WALL_BOT) / 2)
-  WH = WAVE_DY - 1
-  PITCH_CENTER_DY = WAVE_DY
-  PITCH_HALF_ROWS = PITCH_CENTER_DY - WALL_TOP
-  local down = WALL_BOT - PITCH_CENTER_DY
-  if down < PITCH_HALF_ROWS then PITCH_HALF_ROWS = down end
-  RAILS = {}
-  for v = 1, M.NMAX do KNL[v] = -1 WKW[v] = nil end
-  wl_clr = true
-  M.CW, M.CH, M.WALL_ROWS = CW, CH, WALL_ROWS
+  local L = LAYOUTS[max(n, 1)]
+  NCELL, GEN, RAILS = n, GEN + 1, {}
+  CW, CH, CX, CY = L[1], L[2], L[3], L[4]
+  BOT = CH - 4
+  ROWS, WDY = BOT + 1, floor(BOT / 2)
+  WH, PHALF = WDY - 1, min(WDY, BOT - WDY)
+  IH = WH * 2 + 1
+  M.CW, M.CH, M.WALL_ROWS = CW, CH, ROWS
   return true
+end
+
+local function wave(raw)
+  local out, step = {}, M.RAW / CW
+  for c = 0, CW - 1 do
+    local a = floor(c * step)
+    local mx = 0
+    for k = a, max(floor((c + 1) * step) - 1, a) do mx = max(mx, raw[k] or 0) end
+    out[c] = floor(mx * WH + 0.5)
+  end
+  return out
+end
+
+local function wimg(v, l)
+  local im = v.img[l]
+  if im then return im end
+  im = screen.create_image(CW, IH)
+  local w = v.wf
+  s_draw(im, function()
+    s_level(l)
+    local c = 0
+    while c < CW do
+      local h, e = w[c], c
+      while e + 1 < CW and w[e + 1] == h do e = e + 1 end
+      s_rect(c, WH - h, e - c + 1, h * 2 + 1)
+      c = e + 1
+    end
+    s_fill()
+  end)
+  v.img[l] = im
+  return im
 end
 
 local function rails(nl)
   local t = RAILS[nl]
   if t then return t end
   t = {}
-  local span = WALL_BOT - WALL_TOP - 6
+  local span = BOT - 6
   if nl < 2 then
-    t[1] = WALL_TOP + floor((WALL_BOT - WALL_TOP) / 2)
+    t[1] = floor(BOT / 2)
   elseif nl == 2 then
-    t[1] = clamp(WALL_TOP + 2 + floor(span / 3 + 0.5), WALL_TOP + 2, WALL_BOT - 2)
-    t[2] = clamp(WALL_TOP + 4 + floor(span * 2 / 3 + 0.5), WALL_TOP + 2, WALL_BOT - 2)
+    t[1], t[2] = clamp(2 + floor(span / 3 + 0.5), 2, BOT - 2), clamp(4 + floor(span * 2 / 3 + 0.5), 2, BOT - 2)
   else
-    for L = 1, nl do
-      t[L] = WALL_TOP + 3 + floor((L - 1) * span / (nl - 1) + 0.5)
-    end
+    for L = 1, nl do t[L] = 3 + floor((L - 1) * span / (nl - 1) + 0.5) end
   end
   local gap = 99
-  for L = 2, nl do
-    local d = t[L] - t[L - 1]
-    if d < gap then gap = d end
-  end
-  t.half = clamp(floor((gap - 2) / 2), 1, CAP_HALF_MAX)
+  for L = 2, nl do gap = min(gap, t[L] - t[L - 1]) end
+  t.half = clamp(floor((gap - 2) / 2), 1, 2)
   RAILS[nl] = t
   return t
 end
 
-function M.wave(raw)
-  if raw == nil then return nil end
-  local out = {}
-  local step = M.RAW / CW
-  for c = 0, CW - 1 do
-    local a = floor(c * step)
-    local b = floor((c + 1) * step) - 1
-    if b < a then b = a end
-    local mx = 0
-    for k = a, b do
-      local v = raw[k]
-      if v and v > mx then mx = v end
-    end
-    out[c] = floor(mx * WH + 0.5)
+local cov, K0, K1, RUNS, RN, KEY = {}, {}, {}, {}, {}, {}
+for i = 1, M.NMAX do K0[i], K1[i], RUNS[i], RN[i], KEY[i] = {}, {}, {}, 0, {} end
+
+local function prep(v, i, nl, lvl)
+  local k0, k1, ls, le, key, top = K0[i], K1[i], v.ls, v.le, KEY[i], CW - 1
+  local same = key.nl == nl and key.lvl == lvl and key.gen == GEN
+  for L = 1, nl do
+    local c0 = floor(ls[L] * CW)
+    c0 = c0 < 0 and 0 or c0 > top and top or c0
+    local c1 = floor(le[L] * CW + 0.999) - 1
+    c1 = c1 < c0 and c0 or c1 > top and top or c1
+    if same and (k0[L] ~= c0 or k1[L] ~= c1) then same = false end
+    k0[L], k1[L] = c0, c1
   end
-  return out
+  if same then return end
+  key.nl, key.lvl, key.gen = nl, lvl, GEN
+  for c = 0, CW do cov[c] = 0 end
+  for L = 1, nl do
+    local a, b = k0[L], k1[L] + 1
+    cov[a], cov[b] = cov[a] + 1, cov[b] - 1
+  end
+  local rr, m, run, pl = RUNS[i], 0, 0, -1
+  for c = 0, top do
+    run = run + cov[c]
+    local l = lvl[run]
+    if l == pl then rr[m - 1] = c else rr[m + 1], rr[m + 2], rr[m + 3], m, pl = c, c, l, m + 3, l end
+  end
+  RN[i] = m
 end
 
-local function R(l, x, y, w, h)
-  if w <= 0 or h <= 0 or l < 1 then return end
-  if l ~= lastlevel then
-    if pending then s_fill() pending = false end
-    s_level(l) lastlevel = l
-  end
-  s_rect(x, y, w, h)
-  pending = true
-end
-
-local function Rflush()
-  if pending then s_fill() pending = false end
-end
-
-local BQ, BN = {}, {}
-for l = 1, 15 do BQ[l], BN[l] = {}, 0 end
-
-local function B(l, x, y, w, h)
-  if w <= 0 or h <= 0 or l < 1 then return end
-  local n = BN[l]
-  local q = BQ[l]
-  q[n + 1], q[n + 2], q[n + 3], q[n + 4] = x, y, w, h
-  BN[l] = n + 4
-end
-
-local function Bflush()
-  for l = 1, 15 do
-    local n = BN[l]
-    if n > 0 then
-      local q = BQ[l]
-      s_level(l)
-      for k = 1, n, 4 do s_rect(q[k], q[k + 1], q[k + 2], q[k + 3]) end
-      s_fill()
-      BN[l] = 0
-      lastlevel = l
-    end
-  end
-end
-
-local WIMG = nil
-local s_img
-
-local function wall_cols(v)
-  local w0 = floor((s_b0[v] or 0) * CW + 0.5)
-  local w1 = floor((s_b1[v] or 1) * CW + 0.5) - 1
-  if w0 < 0 then w0 = 0 elseif w0 > CW - 2 then w0 = CW - 2 end
-  if w1 < w0 + 1 then w1 = w0 + 1 elseif w1 > CW - 1 then w1 = CW - 1 end
-  return w0, w1
-end
-
-local function draw_wave(w, xo, yc, i0, i1, ytop, ybot, a0)
-  local lvl, cov = LVL, cover
-  local rx, rlv, rh = i0, -1, -1
-  for i = i0, i1 do
-    local lv, h = lvl[cov[i]], w[i]
-    if lv ~= rlv or h ~= rh then
-      if rh >= 0 then
-        local a, b = yc - rh + a0, yc + rh
-        if a < ytop then a = ytop end
-        if b > ybot then b = ybot end
-        if b >= a then B(rlv, xo + rx, a, i - rx, b - a + 1) end
-      end
-      rx, rlv, rh = i, lv, h
-    end
-  end
-  if rh >= 0 then
-    local a, b = yc - rh + a0, yc + rh
-    if a < ytop then a = ytop end
-    if b > ybot then b = ybot end
-    if b >= a then B(rlv, xo + rx, a, i1 + 1 - rx, b - a + 1) end
-  end
-end
-
-local function draw_slide(w, x, y0, ym, dx, dy, nl)
-  local sx = floor(dx + 0.5)
-  local i0, i1 = -sx, CW - 1 - sx
-  if i0 < 0 then i0 = 0 end
-  if i1 > CW - 1 then i1 = CW - 1 end
-  if i1 < i0 then return end
-  local iy = floor(dy)
-  local fr = dy - iy
-  local ytop, ybot = y0 + WALL_TOP, y0 + WALL_BOT
-  local yc = ym + iy
-  if yc - WH > ybot or yc + WH < ytop then return end
-  local xo = x + sx
-  local sub = fr > 0.02
-  local anyt, anyb = false, false
-  if sub then
-    local g = 1 - fr
-    for c = 0, nl do
-      local lv = LVL[c]
-      local t, b = floor(lv * g + 0.5), floor(lv * fr + 0.5)
-      TL[c], BL[c] = t, b
-      if t > 0 then anyt = true end
-      if b > 0 then anyb = true end
-    end
-  end
-  draw_wave(w, xo, yc, i0, i1, ytop, ybot, sub and 1 or 0)
-  if anyt then
-    for i = i0, i1 do
-      local a = yc - w[i]
-      if a >= ytop and a <= ybot then B(TL[cover[i]], xo + i, a, 1, 1) end
-    end
-  end
-  if anyb then
-    for i = i0, i1 do
-      local b = yc + 1 + w[i]
-      if b >= ytop and b <= ybot then B(BL[cover[i]], xo + i, b, 1, 1) end
-    end
-  end
-end
-
-local drawn = {}
-
-local function wl_drop(v)
-  if WKW[v] then
-    WKW[v] = false
-    ND = ND + 1
-    DL[ND] = v
-  end
-end
-
-local function cell_prep(v)
-  local wf = s_wf[v]
-  local ph = xfp[v]
-  KIND[v] = 0
-  drawn[v] = false
-  if ph == nil and not (s_loaded[v] and wf) then
-    wl_drop(v)
-    return
-  end
-  drawn[v] = true
-  local live = s_on[v]
-  local nl = live and (s_nl[v] or 1) or 0
-  if nl > LMAX then nl = LMAX end
-  local ls, le = s_ls[v], s_le[v]
-  local cache = COV[v]
-  local chg = false
-  if nl > 0 then
-    local k0, k1, kok = KC0[v], KC1[v], KOK[v]
-    local same = KNL[v] == nl
-    for L = 1, nl do
-      local a = ls[L]
-      local c0, c1, ok
-      if a then
-        c0 = floor(a * CW)
-        if c0 < 0 then c0 = 0 elseif c0 > CW - 1 then c0 = CW - 1 end
-        c1 = floor(le[L] * CW + 0.999) - 1
-        if c1 < c0 then c1 = c0 elseif c1 > CW - 1 then c1 = CW - 1 end
-        ok = true
+local function cell_wave(v, i)
+  local x, y, sx, sy = CX[i], CY[i], 0, 0
+  if v.xf then sx, sy = floor(v.xx + 0.5), floor(v.xy + 0.5) end
+  local top = y + WDY - WH + sy
+  local r0, r1 = max(0, y - top), min(IH - 1, y + BOT - top)
+  if r1 < r0 then return end
+  local i0, i1, rr, h, w = max(0, -sx), min(CW - 1, CW - 1 - sx), RUNS[i], r1 - r0 + 1, v.wf
+  for k = 1, RN[i], 3 do
+    local a, b, l = max(rr[k], i0), min(rr[k + 1], i1), rr[k + 2]
+    if a <= b then
+      if IMG then
+        s_img(wimg(v, l), a, r0, b - a + 1, h, x + sx + a, top + r0)
       else
-        c0, c1, ok = 0, 0, false
-      end
-      lc0[L], lc1[L], lcok[L] = c0, c1, ok
-      if same and (k0[L] ~= c0 or k1[L] ~= c1 or kok[L] ~= ok) then same = false end
-    end
-    if not same then
-      for i = 0, CW do cdif[i] = 0 end
-      for L = 1, nl do
-        if lcok[L] then
-          local c0, c1 = lc0[L], lc1[L]
-          cdif[c0] = cdif[c0] + 1
-          cdif[c1 + 1] = cdif[c1 + 1] - 1
+        for c = a, b do
+          local ya, yb = max(WH - w[c], r0), min(WH + w[c], r1)
+          R(l, x + sx + c, top + ya, 1, yb - ya + 1)
         end
-        k0[L], k1[L], kok[L] = lc0[L], lc1[L], lcok[L]
       end
-      local run = 0
-      for i = 0, CW - 1 do
-        run = run + cdif[i]
-        cache[i] = run
-      end
-      KNL[v] = nl
-      chg = true
-    end
-  elseif KNL[v] ~= 0 then
-    for i = 0, CW - 1 do cache[i] = 0 end
-    KNL[v] = 0
-    chg = true
-  end
-
-  local lvn = nl > 0 and nl or 1
-  local lvl
-  if NCELL <= FULL_CELLS then
-    lvl = LVLS_FULL[lvn]
-  elseif s_sel == v then
-    lvl = LVLS_SEL[lvn]
-  else
-    lvl = LVLS_DIM[lvn]
-  end
-  CLVL[v] = lvl
-
-  if ph then
-    KIND[v] = nl + 2
-    wl_drop(v)
-  elseif not WL then
-    KIND[v] = 1
-  else
-    local sel = s_sel == v
-    local fz = s_frz[v] and (s_blink and 2 or 1) or 0
-    if chg or WKW[v] ~= wf or WKL[v] ~= lvl or WKS[v] ~= sel or WKF[v] ~= fz then
-      WKW[v], WKL[v], WKS[v], WKF[v], CNL[v] = wf, lvl, sel, fz, nl
-      ND = ND + 1
-      DL[ND] = v
     end
   end
 end
 
-local function cell_wave(v)
-  local y0 = CY[v]
-  LVL, cover = CLVL[v], COV[v]
-  draw_wave(s_wf[v], CX[v], y0 + WAVE_DY, 0, CW - 1, y0 + WALL_TOP, y0 + WALL_BOT, 0)
-end
-
-local function cell_slide(v)
-  local w = xfw[v]
-  if w == nil then return end
-  local y0 = CY[v]
-  LVL, cover = CLVL[v], COV[v]
-  draw_slide(w, CX[v], y0, y0 + WAVE_DY, xfx[v], xfy[v], KIND[v] - 2)
-end
-
-local function rails_caps(v, nl, is_sel, frz_v)
-  local x, y0 = CX[v], CY[v]
-  local k0, k1 = KC0[v], KC1[v]
-  local rd = rails(nl)
-  local rail_level = is_sel and 15 or 9
-  for L = 1, nl do
-    R(rail_level, x + k0[L], y0 + rd[L], k1[L] - k0[L] + 1, 1)
-  end
-  if frz_v and not s_blink then return end
-  local half = rd.half
-  local caph = half * 2 + 1
-  for L = 1, nl do
-    local ry = y0 + rd[L]
-    local e0, e1 = x + k0[L], x + k1[L]
-    R(END_LVL, e0, ry - half, 1, caph)
-    R(END_LVL, e1, ry - half, 1, caph)
-    if frz_v and e1 - e0 >= 2 then
-      R(END_LVL, e0 + 1, ry - half, 1, 1)
-      R(END_LVL, e0 + 1, ry + half, 1, 1)
-      R(END_LVL, e1 - 1, ry - half, 1, 1)
-      R(END_LVL, e1 - 1, ry + half, 1, 1)
-    end
-  end
-end
-
-local function wl_paint()
-  s_level(0)
-  if wl_clr then
-    wl_clr = false
-    s_rect(0, 0, 128, 64)
-  end
-  local h = WALL_ROWS
-  for k = 1, ND do
-    local v = DL[k]
-    s_rect(CX[v], CY[v] + WALL_TOP, CW, h)
-  end
-  s_fill()
-  for k = 1, ND do
-    local v = DL[k]
-    if WKW[v] then cell_wave(v) end
-  end
-  Bflush()
-  for k = 1, ND do
-    local v = DL[k]
-    local nl = CNL[v]
-    if WKW[v] and nl > 0 then rails_caps(v, nl, WKS[v], WKF[v] > 0) end
-  end
-  Rflush()
-end
-
-local function cell_over(v)
-  if not drawn[v] then return end
-  local x, y0 = CX[v], CY[v]
-  local live = s_on[v]
-  local is_loaded = s_loaded[v]
-  local nl = live and (s_nl[v] or 1) or 0
-  if nl > LMAX then nl = LMAX end
-  local is_sel = s_sel == v
-  local frz_v = s_frz[v]
-  local lck = s_lck[v]
-  local ytop, ybot = y0 + WALL_TOP, y0 + WALL_BOT
-  local wall_level = is_sel and WALL or 7
-
-  if xfp[v] == nil and live and nl > 0 then
-    if not WL then rails_caps(v, nl, is_sel, frz_v) end
-    local k0, k1 = KC0[v], KC1[v]
-    local pos = s_pos[v]
-    local rd = rails(nl)
+local function cell_over(v, i, nl, sel, blink)
+  local x, y = CX[i], CY[i]
+  if nl > 0 and not v.xf then
+    local k0, k1, pos, rd = K0[i], K1[i], v.pos, rails(nl)
     local half = rd.half
-    local caph = half * 2 + 1
+    local ch, rl, frz = half * 2 + 1, sel and 15 or 9, v.frz
+    local caps = not frz or blink
     for L = 1, nl do
+      local ry, a, b = y + rd[L], k0[L], k1[L]
+      local xa, xb = x + a, x + b
+      if caps then
+        R(rl, xa + 1, ry, b - a - 1, 1)
+        R(ENDL, xa, ry - half, 1, ch)
+        R(ENDL, xb, ry - half, 1, ch)
+        if frz and b - a >= 2 then
+          R(ENDL, xa + 1, ry - half, 1, 1) R(ENDL, xa + 1, ry + half, 1, 1)
+          R(ENDL, xb - 1, ry - half, 1, 1) R(ENDL, xb - 1, ry + half, 1, 1)
+        end
+      else
+        R(rl, xa, ry, b - a + 1, 1)
+      end
       local p = pos[L]
       if p then
-        local pc = floor(p * CW)
-        local a, b = k0[L], k1[L]
-        if pc < a then pc = a elseif pc > b then pc = b end
-        R(15, x + pc, y0 + rd[L] - half, 1, caph)
+        local c = floor(p * CW)
+        R(15, x + (c < a and a or c > b and b or c), ry - half, 1, ch)
       end
     end
   end
-
-  if lck then
-    local cx0, cx1 = x, x + CW - 1
-    local xa, ya = cx1 - LOCK_ARM + 1, ybot - LOCK_ARM + 1
-    R(wall_level, cx0, ytop, LOCK_ARM, 1)
-    R(wall_level, xa, ytop, LOCK_ARM, 1)
-    R(wall_level, cx0, ybot, LOCK_ARM, 1)
-    R(wall_level, xa, ybot, LOCK_ARM, 1)
-    R(wall_level, cx0, ytop, 1, LOCK_ARM)
-    R(wall_level, cx1, ytop, 1, LOCK_ARM)
-    R(wall_level, cx0, ya, 1, LOCK_ARM)
-    R(wall_level, cx1, ya, 1, LOCK_ARM)
-  end
-
-  if live and is_loaded then
-    local w0, w1 = wall_cols(v)
-    local xw0, xw1 = x + w0, x + w1
-    local lvl_hi = is_sel and WALL or 9
-
-    local img = WIMG and WIMG[wall_level]
-    if img then
-      Rflush()
-      local h = ybot - ytop + 1
-      s_img(img, 0, 0, 1, h, xw0, ytop)
-      s_img(img, 0, 0, 1, h, xw1, ytop)
-      lastlevel = -1
-    else
-      for yy = ytop, ybot, 2 do
-        R(wall_level, xw0, yy, 1, 1)
-        R(wall_level, xw1, yy, 1, 1)
-      end
-    end
-
-    local hvol = floor((s_volf[v] or 0) * WALL_ROWS + 0.5)
-    if hvol > 0 then
-      R(lvl_hi, xw0, ybot - hvol + 1, 1, hvol)
-    end
-
-    local ycenter = y0 + PITCH_CENTER_DY
-    R(wall_level, xw1, ycenter, 1, 1)
-    local pf = clamp(s_pitchf[v] or 0, -1, 1)
-    local hpit = floor(abs(pf) * PITCH_HALF_ROWS + 0.5)
-    if hpit > 0 then
-      if pf > 0 then
-        R(lvl_hi, xw1, ycenter - hpit, 1, hpit + 1)
-      else
-        R(lvl_hi, xw1, ycenter, 1, hpit + 1)
-      end
-    end
+  if v.lck then
+    local wl, x1, yb = sel and WALL or 7, x + CW - 1, y + BOT
+    R(wl, x, y, ARM, 1) R(wl, x1 - ARM + 1, y, ARM, 1) R(wl, x, yb, ARM, 1) R(wl, x1 - ARM + 1, yb, ARM, 1)
+    R(wl, x, y, 1, ARM) R(wl, x1, y, 1, ARM) R(wl, x, yb - ARM + 1, 1, ARM) R(wl, x1, yb - ARM + 1, 1, ARM)
   end
 end
 
-function M.bind(S)
-  xfp, xfw, xfx, xfy = S.xfp, S.xfw, S.xfx, S.xfy
-  s_wf, s_on, s_loaded, s_nl = S.wf, S.on, S.loaded, S.nl
-  s_ls, s_le, s_pos = S.ls, S.le, S.pos
-  s_b0, s_b1, s_volf, s_pitchf = S.b0, S.b1, S.volf, S.pitchf
-  s_frz, s_lck = S.frz, S.lck
-  s_level, s_rect, s_fill = screen.level, screen.rect, screen.fill
-  WIMG, WL = nil, nil
-  wl_clr = true
-  for v = 1, M.NMAX do WKW[v] = nil end
-  if screen.create_image and screen.draw_to and screen.display_image_region then
-    local ok = pcall(function()
-      local t = {}
-      for _, l in ipairs({WALL, 7}) do
-        local img = screen.create_image(1, 64)
-        if img == nil then error("no image") end
-        screen.draw_to(img, function()
-          screen.level(l)
-          for y = 0, 63, 2 do screen.rect(0, y, 1, 1) end
-          screen.fill()
-        end)
-        t[l] = img
-      end
-      WIMG = t
-      WL = screen.create_image(128, 64)
-    end)
-    if not ok then WIMG, WL = nil, nil end
-    s_img, s_draw_to = screen.display_image_region, screen.draw_to
-  end
-end
-
-function M.draw(sel, blink)
-  s_sel, s_blink = sel, blink
-  lastlevel = -1
-  pending = false
-  ND = 0
-  for v = 1, NCELL do cell_prep(v) end
-  if WL then
-    if ND > 0 or wl_clr then
-      s_draw_to(WL, wl_paint)
-      lastlevel = -1
-    end
-    s_img(WL, 0, 0, 128, 64, 0, 0)
-    for v = 1, NCELL do
-      if KIND[v] > 1 then cell_slide(v) end
-    end
+local function cell_walls(v, i, sel)
+  local x, y = CX[i], CY[i]
+  local wl, hi = sel and WALL or 7, sel and WALL or 9
+  local w0 = clamp(floor(v.b0 * CW + 0.5), 0, CW - 2)
+  local w1 = clamp(floor(v.b1 * CW + 0.5) - 1, w0 + 1, CW - 1)
+  local xa, xb = x + w0, x + w1
+  if IMG then
+    s_img(DOT[wl], 0, 0, 1, ROWS, xa, y)
+    s_img(DOT[wl], 0, 0, 1, ROWS, xb, y)
   else
-    for v = 1, NCELL do
-      local k = KIND[v]
-      if k == 1 then cell_wave(v) elseif k > 1 then cell_slide(v) end
+    for yy = y, y + BOT, 2 do R(wl, xa, yy, 1, 1) R(wl, xb, yy, 1, 1) end
+  end
+  local hv = floor((v.volf or 0) * ROWS + 0.5)
+  R(hi, xa, y + BOT - hv + 1, 1, hv)
+  local yc = y + WDY
+  R(wl, xb, yc, 1, 1)
+  local pf = clamp(v.pitchf or 0, -1, 1)
+  local hp = floor(abs(pf) * PHALF + 0.5)
+  if hp > 0 then R(hi, xb, pf > 0 and yc - hp or yc, 1, hp + 1) end
+end
+
+function M.draw(V, sel, blink)
+  local full = NCELL <= 1
+  for i = 1, NCELL do
+    local v = V[i]
+    if v.raw then
+      if v.wgen ~= GEN then v.wgen, v.wf, v.img = GEN, wave(v.raw), {} end
+      local nl = v.on and min(v.nl, LMAX) or 0
+      local lv = max(nl, 1)
+      prep(v, i, nl, full and FULL[lv] or sel == i and SEL[lv] or DIM[lv])
+      cell_wave(v, i)
     end
   end
-  Bflush()
-  for v = 1, NCELL do cell_over(v) end
-  Rflush()
+  if not IMG then flush() end
+  for i = 1, NCELL do
+    local v = V[i]
+    if v.raw then cell_over(v, i, v.on and min(v.nl, LMAX) or 0, sel == i, blink) end
+  end
+  flush()
+  for i = 1, NCELL do
+    local v = V[i]
+    if v.raw and v.on then cell_walls(v, i, sel == i) end
+  end
+  flush()
 end
 
-local BAR_Y = 62
-
-local function P(l, x, y) R(l, x, y, 1, 1) end
-
-function M.icons(drawfn)
-  lastlevel = -1
-  pending = false
-  drawfn(P)
-  Rflush()
+function M.icons(F)
+  if F.n == 0 then return end
+  local r = F.runs
+  if not IMG then
+    for k = 1, F.n, 4 do R(r[k], r[k + 1], r[k + 2], r[k + 3], 1) end
+    return flush()
+  end
+  if icon_ver ~= F.ver then
+    icon_ver, icon_x = F.ver, 128
+    for k = 2, F.n, 4 do icon_x = min(icon_x, r[k]) end
+    ICON = screen.create_image(128, 3)
+    s_draw(ICON, function()
+      for l = 1, 15 do
+        local any = false
+        for k = 1, F.n, 4 do
+          if r[k] == l then
+            if not any then s_level(l) any = true end
+            s_rect(r[k + 1], r[k + 2] - 61, r[k + 3], 1)
+          end
+        end
+        if any then s_fill() end
+      end
+    end)
+  end
+  s_img(ICON, icon_x, 0, 128 - icon_x, 3, icon_x, 61)
 end
 
-function M.volbar(frac)
-  local w = floor(frac * 128 + 0.5)
-  if w <= 0 then return end
-  Rflush()
-  screen.level(15)
-  screen.rect(0, BAR_Y, w, 1)
-  screen.fill()
-  lastlevel = -1
+local function bar(x, y, w, f)
+  local fw = floor(clamp(f, 0, 1) * w + 0.5)
+  s_level(4) s_rect(x, y, w, 1) s_fill()
+  if fw > 0 then s_level(15) s_rect(x, y, fw, 1) s_fill() end
 end
 
-local THUMB_W = 7
-function M.morphbar(frac)
-  Rflush()
-  screen.level(1)
-  screen.rect(0, BAR_Y, 128, 1)
-  screen.fill()
-  screen.level(15)
-  screen.rect(floor(frac * (128 - THUMB_W) + 0.5), BAR_Y, THUMB_W, 1)
-  screen.fill()
-  lastlevel = -1
+function M.volbar(f)
+  local w = floor(f * 128 + 0.5)
+  if w > 0 then s_level(15) s_rect(0, 62, w, 1) s_fill() end
+end
+
+function M.morphbar(f)
+  s_level(1) s_rect(0, 62, 128, 1) s_fill()
+  s_level(15) s_rect(floor(f * 121 + 0.5), 62, 7, 1) s_fill()
 end
 
 function M.notice(l1, l2, l3)
-  Rflush()
-  screen.level(15)
-  screen.move(64, 24)
-  screen.text_center(l1)
-  screen.level(3)
-  if l2 then
-    screen.move(64, 36)
-    screen.text_center(l2)
-  end
-  if l3 then
-    screen.move(64, 46)
-    screen.text_center(l3)
-  end
-  lastlevel = -1
+  s_level(15) screen.move(64, 24) screen.text_center(l1)
+  s_level(3) screen.move(64, 36) screen.text_center(l2) screen.move(64, 46) screen.text_center(l3)
 end
 
-local function pbar(x, y, w, frac)
-  local fw = floor(clamp(frac, 0, 1) * w + 0.5)
-  screen.level(4)
-  screen.rect(x, y, w, 1)
-  screen.fill()
-  if fw > 0 then
-    screen.level(15)
-    screen.rect(x, y, fw, 1)
-    screen.fill()
-  end
-end
-
-function M.fxpopup(txt, frac)
+function M.fxpopup(txt, f)
   local w = #txt * 5 + 8
   local x = 64 - floor(w * 0.5)
-  Rflush()
-  screen.level(1)
-  screen.rect(x, 26, w, frac and 12 or 10)
-  screen.fill()
-  screen.level(15)
-  screen.move(64, 34)
-  screen.text_center(txt)
-  if frac then pbar(x, 37, w, frac) end
-  lastlevel = -1
+  s_level(1) s_rect(x, 26, w, f and 12 or 10) s_fill()
+  s_level(15) screen.move(64, 34) screen.text_center(txt)
+  if f then bar(x, 37, w, f) end
 end
-
-local REC_W, REC_H, REC_Y = 92, 27, 20
 
 function M.recpopup(title, sub, frac, note, prog)
-  local x = 64 - floor(REC_W / 2)
-  local bw = REC_W - 10
-  local plain = not (sub or note or frac)
-  local h = plain and 16 or REC_H
-  Rflush()
-  screen.level(0)
-  screen.rect(x, REC_Y, REC_W, h)
-  screen.fill()
-  screen.level(4)
-  screen.line_width(1)
-  screen.rect(x + 0.5, REC_Y + 0.5, REC_W - 1, h - 1)
-  screen.stroke()
-  screen.level(15)
-  if plain then
-    screen.move(64, REC_Y + 11)
-    screen.text_center(title)
-  else
-    screen.move(x + 5, REC_Y + 11)
-    screen.text(title)
-  end
-  if sub then
-    screen.level(6)
-    screen.move(x + REC_W - 5, REC_Y + 11)
-    screen.text_right(sub)
-  end
+  local x, plain = 18, not (sub or note or frac)
+  local h = plain and 16 or 27
+  s_level(0) s_rect(x, 20, 92, h) s_fill()
+  s_level(4) screen.line_width(1) screen.rect(x + 0.5, 20.5, 91, h - 1) screen.stroke()
+  s_level(15)
+  if plain then screen.move(64, 31) screen.text_center(title) else screen.move(x + 5, 31) screen.text(title) end
+  if sub then s_level(6) screen.move(x + 87, 31) screen.text_right(sub) end
   if note then
-    screen.level(5)
-    screen.move(x + 5, REC_Y + 21)
-    screen.text(note)
+    s_level(5) screen.move(x + 5, 41) screen.text(note)
   elseif frac then
     for k = 1, 2 do
-      local y = REC_Y + 12 + k * 4
-      local fw = floor(clamp(frac[k] or 0, 0, 1) * bw + 0.5)
-      screen.level(2)
-      screen.rect(x + 5, y, bw, 3)
-      screen.fill()
-      if fw > 0 then
-        screen.level(15)
-        screen.rect(x + 5, y, fw, 3)
-        screen.fill()
-      end
+      local y, fw = 32 + k * 4, floor(clamp(frac[k] or 0, 0, 1) * 82 + 0.5)
+      s_level(2) s_rect(x + 5, y, 82, 3) s_fill()
+      if fw > 0 then s_level(15) s_rect(x + 5, y, fw, 3) s_fill() end
     end
   end
-  if prog then pbar(x, REC_Y + h - 1, REC_W, prog) end
-  lastlevel = -1
+  if prog then bar(x, 20 + h - 1, 92, prog) end
 end
 
-local function stroke_curve(b)
-  Rflush()
-  screen.level(15)
-  screen.line_width(1)
-  screen.move(0, b[0])
+local function curve(b)
+  s_level(15) screen.line_width(1) screen.move(0, b[0])
   for c = 1, 127 do screen.line(c, b[c]) end
   screen.stroke()
-  lastlevel = -1
 end
 
-local tbuf, tkey = {}, 1e9
+local function tanh(z) local e = exp(2 * z) return (e - 1) / (e + 1) end
+local TILT, TMAX, TMIN = {}, -math.huge, math.huge
+for c = 0, 127 do
+  TILT[c] = tanh((c / 127 - 0.53) / 0.3)
+  TMAX, TMIN = max(TMAX, TILT[c]), min(TMIN, TILT[c])
+end
+local TAMP = 58 / (TMAX - TMIN)
+local TCY = TMAX * TAMP
+local tbuf, tkey = {}, nil
 
 function M.tilteq(t)
   if tkey ~= t then
     tkey = t
-    for c = 0, 127 do
-      local dy = clamp(t * TILT_CURVE[c] * TILT_AMP, -TILT_AMP, TILT_AMP)
-      tbuf[c] = clamp(floor(TILT_CY - dy + 0.5), 0, 63)
-    end
+    for c = 0, 127 do tbuf[c] = clamp(floor(TCY - clamp(t * TILT[c] * TAMP, -TAMP, TAMP) + 0.5), 0, 63) end
   end
-  stroke_curve(tbuf)
+  curve(tbuf)
 end
 
-local FILT_IQ_LO = 1 / (FILT_Q_LO * FILT_Q_LO)
+local FK, LN = 0.35, 1 / log(1000)
+local IQ_HI = 1 / 16
+local FMAX = 1 / (1 + FK * sqrt(IQ_HI * (1 - 0.25 * IQ_HI)))
+local OCT = {}
+for d = -127, 127 do OCT[d] = exp(2 * log(1000) / 127 * d) end
 
-local function knee_of(cut)
-  return floor(clamp(log(cut / 20) * FILT_LOGN, 0, 1) * 127 + 0.5)
-end
-
-local function fill_filter(buf, knee, iq, up)
+local function fill(buf, cut, iq, up)
+  local knee = floor(clamp(log(cut / 20) * LN, 0, 1) * 127 + 0.5)
   for c = 0, 127 do
-    local r2 = FILT_OCT[up * (c - knee)]
+    local r2 = OCT[up * (c - knee)]
     local m = 1 - r2
-    local f = 1 / (1 + FILT_K * sqrt(m * m + r2 * iq)) / FILT_FMAX
-    if f > 1 then f = 1 end
-    buf[c] = CURVE_BOT - floor(f * FILT_AMP + 0.5)
+    buf[c] = 58 - floor(min(1 / (1 + FK * sqrt(m * m + r2 * iq)) / FMAX, 1) * 58 + 0.5)
   end
 end
 
-local fbuf, fkey_c, fkey_r = {}, -1, -1
+local fbuf, fkey, hbuf, hkey = {}, nil, {}, nil
 
 function M.filter(cut, res)
-  if fkey_c ~= cut or fkey_r ~= res then
-    fkey_c, fkey_r = cut, res
-    local q = FILT_Q_LO + clamp(res, 0, 1) ^ FILT_Q_EXP * (FILT_Q_HI - FILT_Q_LO)
-    fill_filter(fbuf, knee_of(cut), 1 / (q * q), 1)
+  local key = cut * 1000 + res
+  if fkey ~= key then
+    fkey = key
+    local q = 0.707 + clamp(res, 0, 1) ^ 1.3 * (4 - 0.707)
+    fill(fbuf, cut, 1 / (q * q), 1)
   end
-  stroke_curve(fbuf)
+  curve(fbuf)
 end
 
-local hbuf, hkey = {}, -1
-
 function M.hpf(cut)
-  if hkey ~= cut then
-    hkey = cut
-    fill_filter(hbuf, knee_of(cut), FILT_IQ_LO, -1)
-  end
-  stroke_curve(hbuf)
+  if hkey ~= cut then hkey = cut fill(hbuf, cut, 1 / (0.707 * 0.707), -1) end
+  curve(hbuf)
 end
 
 M.set_count(6)
