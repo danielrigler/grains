@@ -2,7 +2,8 @@ local G = {}
 
 local floor = math.floor
 local NVR, UP, DN = 6, 7, 8
-local BG, LO, HI, IDLE, BLINK, FX_LO, FX_HI = 2, 6, 15, 4, 4, 1, 12
+local BG, BG_LCK, LO, HI, IDLE, FX_LO, FX_HI = 2, 4, 6, 15, 4, 1, 12
+local PULSE, DEPTH, dim = 2.4, 3, 0
 local STEP, REP, REP_WAIT = 0.05, 0.02, 0.3
 local NBIG, NSMALL, BIG, HYST, EQ, VQ, VHYST, FAST = 24, 16, 2, 0.75, 3, 4, 0.75, 0.5
 
@@ -62,18 +63,19 @@ local function meter(u, x) led[u], led[u + W] = lvl(x * 2 - 1), lvl(x * 2) end
 
 local function redraw()
   if not g or not g.device then return end
-  local n, blink = cfg.count(), cfg.blink()
+  local n = cfg.count()
   local k, dirty = 0, backlog
   for i = 1, NVR do
     local v = V[i]
-    local live = i <= n and v.file ~= nil
+    local live = i <= n and v.file ~= nil and (v.lck and 2 or 1)
     local hi = IDLE
     if v.on then
       local x, q = (v.volf or 0) * VQ, rq[i]
       if not q or x - q > VHYST or q - x > VHYST then q = floor(x + 0.5) rq[i] = q end
       hi = LO + (HI - LO) * q / VQ
     end
-    if blink and v.frz then hi = hi >= LO + BLINK and hi - BLINK or hi + BLINK end
+    local bg = v.lck and BG_LCK or BG
+    hi = math.max(v.frz and hi - dim or hi, bg + 1)
     local a, b = v.b0 * W, v.b1 * W
     local ma, mb = a - (pa[i] or a), b - (pb[i] or b)
     pa[i], pb[i] = a, b
@@ -84,10 +86,10 @@ local function redraw()
         local l = 0
         if live then
           local cov = math.min(b, c + 1) - math.max(a, c)
-          l = BG
+          l = bg
           if cov > 0 then
             cov = floor(cov * eq + 0.5)
-            if cov > 0 or eq == EQ then l = BG + (hi - BG) * math.max(cov, 1) / eq end
+            if cov > 0 or eq == EQ then l = bg + (hi - bg) * math.max(cov, 1) / eq end
           end
         end
         led[k + c + 1] = l
@@ -204,6 +206,7 @@ end
 function G.held(i) return anchor[i] ~= nil end
 
 function G.tick(now)
+  dim = floor(DEPTH * (1 - math.abs(now / PULSE % 1 * 2 - 1)) + 0.5)
   if g.dest and #g.dest ~= tn then tn = #g.dest toga_save() end
   if rep_k and now >= rep_t then act(rep_k % 32, rep_d, nil, rep_v) end
   redraw()

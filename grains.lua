@@ -1737,6 +1737,12 @@ local function setup_params()
     p.startp, p.widthp = params:lookup_param(p.bstart), params:lookup_param(p.bwidth)
   end
   sys.last = #params.params
+
+  group("other", "OTHER", 2)
+  trig("do_update", "Check for Updates", function() menu_close() installer:check(true) end)
+  opt("auto_update", "Auto Update Check", OFFON, installer.auto and 2 or 1, function(v) installer:set_auto(v == 2) end)
+  params:set_save("auto_update", false)
+
   for _, id in ipairs(HIDDEN) do params:hide(id) end
 end
 
@@ -1940,7 +1946,35 @@ end
 local MORPH_SKIP = {morph = true, source = true, chunk = true, lseed = true, level = true, quality = true, rev_type = true, d_series = true, binaural = true}
 local function morph_skip(id)
   return MORPH_SKIP[id] or id:find("^morph") or id:find("^vlfo") or id:find("^do_") or id:find("^lock_")
-    or id:find("^freeze") or id:find("^rec_") or id:find("^rlfo")
+    or id:find("^freeze") or id:find("^rec_") or id:find("^bounce_") or id:find("^rlfo")
+end
+
+local RCFG = {path = norns.state.data .. "rec_settings",
+  ids = {"rec_gain", "rec_max", "rec_norm", "rec_src", "rec_mon", "bounce_len", "bounce_xf", "rec_lnorm"}}
+
+function RCFG.load()
+  local f = io.open(RCFG.path, "r")
+  if not f then return end
+  local t = {}
+  for line in f:lines() do
+    local id, v = line:match("^(%S+)%s+(%S+)$")
+    if id then t[id] = tonumber(v) end
+  end
+  f:close()
+  for _, id in ipairs(RCFG.ids) do if t[id] then params:set(id, t[id]) end end
+end
+
+function RCFG.save()
+  RCFG.t = nil
+  local f = io.open(RCFG.path, "w")
+  if not f then return end
+  for _, id in ipairs(RCFG.ids) do f:write(id, " ", params:get(id), "\n") end
+  f:close()
+end
+
+function RCFG.watch()
+  local function mark() RCFG.t = util.time() + 1 end
+  for _, id in ipairs(RCFG.ids) do params:set_action(id, mark) end
 end
 
 local function frame()
@@ -1948,7 +1982,8 @@ local function frame()
   local now = util.time()
   if next(fpend) then src_flush() end
   sys.n = sys.n + 1
-  if sys.n == FPS * 10 then installer:check() end
+  if sys.n == FPS * 10 and installer.auto then installer:check() end
+  if RCFG.t and now >= RCFG.t then RCFG.save() end
   if sys.n % 2 == 0 then
     Sync.tick(now)
     physics_tick(now, sys.n % 4 == 0)
@@ -2007,12 +2042,14 @@ function init()
   matrix.bind()
   reroll_seeds(true)
   setup_params()
+  RCFG.load()
   setup_osc()
   Sync.set_rate(CTRL_HZ)
   Keys.init{combos = COMBOS, longpress = 1, coarse = {density = 5, layers = 5, voices = 5, scale = 4}}
   params:set("lseed", random(9999))
   params:set("morph_seed", random(9999))
   params:bang()
+  RCFG.watch()
   font.init()
   FXM.check(util.time())
   refresh_layout()
@@ -2028,7 +2065,6 @@ function init()
   Grid.init{
     V = V,
     count = function() return nva end,
-    blink = function() return blink end,
     densfrac = function() return DENSP.max > 0 and DENSP:get() / DENSP.max or 0 end,
     density = function(d, tap)
       local now = util.time()
@@ -2089,6 +2125,7 @@ function init()
 end
 
 function cleanup()
+  if RCFG.t then RCFG.save() end
   sys.dead = true
   if sys.metro then sys.metro:stop() end
   Grid.cleanup()
