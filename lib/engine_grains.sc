@@ -665,11 +665,11 @@ Engine_grains : CroneEngine {
             var fbT = LocalIn.kr(1), t = (envF > (envS * 1.7 + 0.008)) * (1 - SetResetFF.kr(fbT, envF < (peak * 0.08))) * (1 - Trig1.kr(fbT, 0.25));
             var ramp = 1 - Decay.kr(t, 6.9078 / (((1 - span).cubed * 1.13e-4 + 2.8e-6) * 44100)).min(1);
             var ratio = (Select.kr(rise < 0.5, [rise * 2, rise + 0.5]) * (glide * 0.6 * ramp * ((rise >= 0.5) * 2 - 1) + 1)).clip(0.25, (d / 1024).clip(1.05, 4));
-            var gtrig = Impulse.ar(sr / 1024), gt = Sweep.ar(gtrig, sr), wp = Phasor.ar(0, 1, 0, frames), e, lp;
+            var gtrig = Impulse.ar(sr / 1024, [0, 0.5]), gt = Sweep.ar(gtrig, sr), wp = Phasor.ar(0, 1, 0, frames), e, lp;
             LocalOut.kr(t);
             e = (gt.min(1024 - gt) * 0.001953125).clip(0, 1);
-            lp = OnePole.ar(BufRd.ar(2, spiralBuffer, (Latch.ar(wp - d, gtrig) + Sweep.ar(gtrig, ratio * sr)).wrap(0, frames), 1, 2) * (e * e * (3 - (2 * e))), 0.97 - (tone * 0.5));
-            BufWr.ar(soft.(lp * (feedback * 0.965) + x) * (1 - flush), spiralBuffer, wp);
+            lp = OnePole.ar((BufRd.ar(2, spiralBuffer, (Latch.ar(wp - d, gtrig) + Sweep.ar(gtrig, ratio * sr)).wrap(0, frames), 1, 2) * (e * e * (3 - (2 * e)))).sum, 0.97 - (tone * 0.5));
+            BufWr.ar(soft.((lp - OnePole.ar(lp, 0.987)) * (feedback * 0.6) + x) * (1 - flush), spiralBuffer, wp);
             ReplaceOut.ar(bus, (soft.(x + lp) - x) * mix + x);
         }).add;
 

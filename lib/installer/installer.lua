@@ -23,18 +23,7 @@ function Installer.new()
   local m = setmetatable({}, Installer)
   m.path = trim(norns.state.path):gsub("/$", "")
   m.update = {state = nil, behind = 0, message = nil}
-  m.cfg = norns.state.data .. "auto_update"
-  local f = io.open(m.cfg, "r")
-  m.auto = f ~= nil and f:read("*l") == "1"
-  if f then f:close() end
   return m
-end
-
-function Installer:set_auto(on)
-  if on == self.auto then return end
-  self.auto = on
-  local f = io.open(self.cfg, "w")
-  if f then f:write(on and "1" or "0") f:close() end
 end
 
 function Installer:check(manual)
@@ -130,7 +119,7 @@ function Installer:redraw()
   elseif s == "restarting" then
     line(28, "Restarting...")
   elseif s == "info" then
-    local m = self.update.message or MSG.failed
+    local m = self.update.message
     line(18, m[1])
     line(30, m[2], 1)
     line(46, "K2/K3: Dismiss")
