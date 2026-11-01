@@ -21,7 +21,7 @@ Engine_grains : CroneEngine {
     var eqLow = 0, eqMid = 0, eqHigh = 0, glRatio = 0, glMix = 1;
     var vparams, nls, actives, wins, loadTok, loadReq, loadCur, loadBusy;
     var recBuf, recSyn, recPath, recNorm = 0, recBegan, recOn = false, oRec, inL = 0, inR = 1;
-    var fxTok, liveSyn, liveSlot = -1, liveTok = 0, liveRun = true, liveIn, heads, seam, oLive, liveCols, liveG = 1;
+    var fxTok, liveSyn, liveSlot = -1, liveTok = 0, liveRun = true, liveIn, heads, seam, oLive, liveCols, liveG = 1, pks;
 
     *new { arg context, doneCallback; ^super.new(context, doneCallback); }
 
@@ -137,9 +137,27 @@ Engine_grains : CroneEngine {
 
     liveSet { arg i, on;
         if(seam[i] != on, { nlMax.do({ arg ly; dying[i][ly] = nil }) });
+        if(seam[i].not or: { on.not }, { this.setVoice(i, \ngain, 1) });
         seam[i] = on;
         pgv[i].set(\head, if(on, { heads[i].asMap }, -1));
-        this.setVoice(i, \ngain, 1);
+    }
+
+    redef { arg i, rel = 0.4, intro = 0.15;
+        if(actives[i] and: { buffers[i] !== silent }, {
+            nls[i].min(nlMax).do({ arg ly;
+                this.retire(voices[i][ly], rel);
+                voices[i][ly] = Synth.head(pgv[i], this.ldef(i), this.layerArgs(i, ly) ++ [\i_intro, intro]);
+            });
+        });
+    }
+
+    liveRec { arg i, b;
+        liveCols = pks[i];
+        this.liveSet(i, true);
+        liveG = vparams[i][\ngain] ? 1;
+        this.liveNorm;
+        liveSyn = Synth(\grainslive, [\buf, b, \head, heads[i].index, \inL, inL, \inR, inR, \out, context.out_b.index,
+            \gain, liveIn[0], \src, liveIn[1], \mon, liveIn[2], \pre, liveIn[3], \run, liveRun.binaryValue], context.xg, 'addToHead');
     }
 
     liveNorm {
@@ -153,26 +171,45 @@ Engine_grains : CroneEngine {
         liveSlot = -1;
     }
 
-    liveStart { arg i, len;
-        var t;
+    liveStart { arg i, len, keep = 0, mid = 0.5;
+        var t, old, op, n = (context.server.sampleRate * len.clip(2, 30)).round.asInteger;
         if((i < 0) or: { i >= nv }, { ^this });
         this.liveStop;
         loadTok[i] = loadTok[i] + 1;
         liveSlot = i;
+        old = buffers[i];
+        op = pks[i];
+        keep = (keep > 0) and: { old !== silent };
+        if(keep and: { old.numFrames == n }, {
+            var was = seam[i];
+            this.liveRec(i, old);
+            if(was.not, { this.redef(i, 1.5, 0.02) });
+            ^this
+        });
         t = liveTok;
         fork {
-            var b = Buffer.alloc(context.server, (context.server.sampleRate * len.clip(2, 30)).round.asInteger, 1), j, old;
+            var b = Buffer.alloc(context.server, n, 1), p, j, on, s0, src, k = 0;
             context.server.sync;
+            if(keep, {
+                on = old.numFrames;
+                s0 = ((mid * on) - (mid * n)).round.asInteger % on;
+                src = s0;
+                while({ k < n }, { var m = min(on - src, n - k); old.copyData(b, k, src, m); k = k + m; src = 0 });
+                context.server.sync;
+                p = Array.fill(wfCols, { arg q;
+                    var a = (s0 + (q * n / wfCols)) % on, c0 = (a * wfCols / on).floor.asInteger, c1 = ((a + (n / wfCols)) * wfCols / on).ceil.asInteger - 1;
+                    (c0..c1.max(c0)).collect({ arg x; op[x % wfCols] }).maxItem
+                });
+            }, { p = Array.fill(wfCols, 0) });
             j = liveSlot;
-            if((t == liveTok) and: { j >= 0 }, {
-                old = buffers[j];
+            if((t == liveTok) and: { j >= 0 } and: { buffers[j] === old }, {
                 buffers[j] = b;
-                liveCols = Array.fill(wfCols, 0);
-                liveG = 1;
-                this.liveSet(j, true);
-                liveSyn = Synth(\grainslive, [\buf, b, \head, heads[j].index, \inL, inL, \inR, inR, \out, context.out_b.index,
-                    \gain, liveIn[0], \src, liveIn[1], \mon, liveIn[2], \pre, liveIn[3], \run, liveRun.binaryValue], context.xg, 'addToHead');
-                this.startVoice(j);
+                pks[j] = p;
+                this.liveRec(j, b);
+                if(keep, {
+                    this.redef(j, 1.5, 0.02);
+                    nornsAddr.sendMsg(*(["/grains/waveform", j] ++ p ++ [0]));
+                }, { this.startVoice(j) });
                 if(old !== silent, { fork { 2.5.wait; old.free } });
             }, { b.free });
         };
@@ -403,12 +440,7 @@ Engine_grains : CroneEngine {
         loopLv = [\grainslooplv, \grainsloopecolv, \grainsloopbinlv, \grainsloopecobinlv][k];
         nv.do({ arg i;
             nlMax.do({ arg ly; dying[i][ly] = nil });
-            if(actives[i] and: { buffers[i] !== silent }, {
-                nls[i].min(nlMax).do({ arg ly;
-                    this.retire(voices[i][ly], 0.4);
-                    voices[i][ly] = Synth.head(pgv[i], this.ldef(i), this.layerArgs(i, ly) ++ [\i_intro, 0.15]);
-                });
-            });
+            this.redef(i);
         });
     }
 
@@ -497,6 +529,7 @@ Engine_grains : CroneEngine {
         this.liveSet(i, false);
         old = buffers[i];
         buffers[i] = b;
+        pks[i] = peaks;
         this.startVoice(i);
         if(old.notNil and: { old !== silent }, { fork { 2.5.wait; old.free } });
         nornsAddr.sendMsg(*(["/grains/waveform", i] ++ peaks ++ [start / sr]));
@@ -509,7 +542,7 @@ Engine_grains : CroneEngine {
         if(p.notNil and: { p[4] != loadTok[src] }, { p = nil });
         loadTok[src] = loadTok[src] + 1;
         loadTok[dst] = loadTok[dst] + 1;
-        [buffers, voices, dying, dyingUntil, vparams, nls, actives, pgv, voiceBus, vfilt, vfDef, vfOn, heads, seam].do({ arg a; a.swap(src, dst) });
+        [buffers, voices, dying, dyingUntil, vparams, nls, actives, pgv, voiceBus, vfilt, vfDef, vfOn, heads, seam, pks].do({ arg a; a.swap(src, dst) });
         if(liveSlot == src, { liveSlot = dst }, { if(liveSlot == dst, { liveSlot = src }) });
         bs = src * nlMax * 2;
         bd = dst * nlMax * 2;
@@ -574,6 +607,7 @@ Engine_grains : CroneEngine {
         loadCur = Array.fill(nv, { nil });
         heads = Array.fill(nv, { Bus.control(context.server, 1) });
         seam = Array.fill(nv, { false });
+        pks = Array.fill(nv, { Array.fill(wfCols, 0) });
         liveIn = [1, 1, 0, 0, 0];
         loadBusy = Array.fill(nv, { false });
 
@@ -1118,7 +1152,7 @@ Engine_grains : CroneEngine {
         this.addCommand("bounce", "fsff", { arg msg; this.bounce(msg[1], msg[2].asString, msg[3], msg[4]) });
         this.addCommand("rec_start", "sfffff", { arg msg; this.recStart(msg[1].asString, msg[2], msg[3], msg[4], msg[5], msg[6]) });
         this.addCommand("rec_stop", "i", { arg msg; this.recStop(msg[1].asInteger) });
-        this.addCommand("live_start", "if", { arg msg; this.liveStart(msg[1].asInteger, msg[2]) });
+        this.addCommand("live_start", "ifif", { arg msg; this.liveStart(msg[1].asInteger, msg[2], msg[3], msg[4]) });
         this.addCommand("live_stop", "", { this.liveStop });
         this.addCommand("live_run", "i", { arg msg; liveRun = msg[1] > 0; if(liveSyn.notNil, { liveSyn.set(\run, liveRun.binaryValue) }) });
         this.addCommand("live_in", "fffff", { arg msg;

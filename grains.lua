@@ -593,7 +593,7 @@ local function reroll_seeds(snap)
 end
 
 local function unload_view(v)
-  v.xf, v.raw, v.lhead, dirty = nil, nil, nil, true
+  v.xf, v.raw, v.pk, v.lhead, dirty = nil, nil, nil, nil, true
   for L = 1, NL do v.pos[L] = 0 end
 end
 
@@ -1329,21 +1329,26 @@ local function live_cap(j)
 end
 
 function LIVE.start(i)
-  local v, j, raw = V[i], LIVE.slot, {}
+  local v, j = V[i], LIVE.slot
+  local keep = v.file ~= nil and v.raw ~= nil and v.pk ~= nil
   if j and j ~= i then live_cap(j) end
   LIVE.slot, LIVE.frz = i, v.frz == true
   v.file, v.len, v.at, v.tries = LIVE_F, nil, 0, 0
-  unload_view(v)
-  v.lpk = {}
-  for c = 0, matrix.RAW - 1 do raw[c], v.lpk[c] = 0, 0 end
-  v.raw, v.wgen = raw, nil
-  xf_in(v)
+  if keep then
+    LIVE.wf = true
+  else
+    local raw, pk = {}, {}
+    unload_view(v)
+    for c = 0, matrix.RAW - 1 do raw[c], pk[c] = 0, 0 end
+    v.raw, v.pk, v.wgen = raw, pk, nil
+    xf_in(v)
+  end
   params:set(PID[i].file, LIVE_F, true)
   refresh_layout()
   push_vps(i)
   engine.live_in(LIVE.args())
   engine.live_run(LIVE.frz and 0 or 1)
-  engine.live_start(i - 1, params:get("rec_llen"))
+  engine.live_start(i - 1, params:get("rec_llen"), keep and 1 or 0, (v.lo + v.hi) * 0.5)
 end
 
 function LIVE.go(fresh)
@@ -1875,12 +1880,13 @@ local function setup_osc()
     local i = (args[1] or 0) + 1
     if path == "/grains/waveform" then
       if i < 1 or i > NV then return end
-      local raw, mx, N, v = {}, 0, matrix.RAW, V[i]
+      local raw, pk, mx, N, v = {}, {}, 0, matrix.RAW, V[i]
       for c = 0, N - 1 do
-        raw[c] = args[c + 2] or 0
-        mx = max(mx, raw[c])
+        pk[c] = args[c + 2] or 0
+        mx = max(mx, pk[c])
       end
-      for c = 0, N - 1 do raw[c] = mx > 0 and math.sqrt(raw[c] / mx) or 0 end
+      for c = 0, N - 1 do raw[c] = mx > 0 and math.sqrt(pk[c] / mx) or 0 end
+      v.pk = pk
       local at = args[N + 2]
       v.at = type(at) == "number" and at >= 0 and at or 0
       v.raw, v.wgen = raw, nil
@@ -1894,8 +1900,8 @@ local function setup_osc()
       REC.level, REC.level_r, REC.metered, REC.peak = l, r, true, max(REC.peak, l, r)
     elseif path == "/grains/live" then
       local v, c = V[i], args[2]
-      if i == LIVE.slot and v.lpk and c then
-        v.lpk[c], v.lhead, LIVE.wf = max(args[3] or 0, 0), (c + 1) % matrix.RAW, true
+      if i == LIVE.slot and v.pk and c then
+        v.pk[c], v.lhead, LIVE.wf = max(args[3] or 0, 0), (c + 1) % matrix.RAW, true
       end
     elseif path == "/grains/live_saved" then
       LIVE.saved(i, (args[2] or 0) > 0)
@@ -2087,7 +2093,7 @@ local function frame()
   FXM.check(now)
   if LIVE.wf and LIVE.slot and now - LIVE.t >= 0.25 then
     local v, mx = V[LIVE.slot], 0.002
-    local pk, raw = v.lpk, v.raw
+    local pk, raw = v.pk, v.raw
     if pk and raw then
       for c = 0, matrix.RAW - 1 do mx = max(mx, pk[c]) end
       for c = 0, matrix.RAW - 1 do raw[c] = math.sqrt(pk[c] / mx) end
