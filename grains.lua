@@ -1340,16 +1340,28 @@ local function reso_update()
   if diff then engine.reso_freqs(table.unpack(reso.sent, 1, 5)) end
 end
 
+local SPIRAL = {{0.5, "oct down", -12}, {2 / 3, "5th down", -7}, {0.75, "4th down", -5}, {1, "unison", 0}, {4 / 3, "4th up", 5}, {1.5, "5th up", 7}, {2, "oct up", 12}}
+local function spiral(v)
+  local k, sc = floor((v + 100) * 0.03 + 0.5) + 1, params:get("scale")
+  while not Scale.has(SPIRAL[k][3], sc) do k = k + (k > 4 and -1 or 1) end
+  return SPIRAL[k]
+end
+
+local function spiral_send()
+  local r = spiral(params:get("spiral_rise"))[1]
+  if r == reso.rise then return end
+  reso.rise = r
+  engine.spiral_rise(r >= 1 and r * 0.5 or r - 0.5)
+end
+
 local function key_fx()
   reso_update()
+  spiral_send()
   local f = Scale.fifth(params:get("scale"))
   if f == reso.fifth then return end
   reso.fifth = f
   engine.gl_ratios(0.5, f and 0.7491535 or 0.5, f and 1.4983071 or 2, 2)
 end
-
-local SPIRAL = {{0.5, "oct down"}, {2 / 3, "5th down"}, {0.75, "4th down"}, {1, "unison"}, {4 / 3, "4th up"}, {1.5, "5th up"}, {2, "oct up"}}
-local function spiral(v) return SPIRAL[floor((v + 100) * 0.03 + 0.5) + 1] end
 
 local function short_name(v, dir)
   if type(v) ~= "string" or v == "" or v == "-" then return "-" end
@@ -1594,10 +1606,7 @@ local function setup_params()
   opt("spiral_div", "Division", {"1/32", "1/16T", "1/16", "1/8T", "1/8", "1/8.", "1/4", "1/4."}, 5,
     function(v) engine.spiral_bpm(clock.get_tempo()) engine.spiral_div(SDIV[v]) end)
   pct("spiral_feedback", "Feedback", 50)
-  ctl("spiral_rise", "Rise", -100, 100, "lin", 1, 50, "%", function(v)
-    local r = spiral(v)[1]
-    engine.spiral_rise(r >= 1 and r * 0.5 or r - 0.5)
-  end)
+  ctl("spiral_rise", "Rise", -100, 100, "lin", 1, 50, "%", spiral_send)
   str("spiral_rise", function(p) return spiral(p:get())[2] end)
   pct("spiral_glide", "Glide", 0)
   pct("spiral_span", "Span", 50)
@@ -1924,7 +1933,8 @@ function enc(n, d)
     end
   elseif sel >= 1 then
     region_grab(sel)
-    params:delta(PID[sel][n == 2 and "bstart" or "bwidth"], d)
+    local p = PID[sel]
+    if n == 2 then params:set(p.bstart, clamp(p.startp:get() + d, 0, 100 - p.widthp:get())) else params:delta(p.bwidth, d) end
   end
 end
 
@@ -1951,8 +1961,12 @@ local CFG = {path = norns.state.data .. "settings",
   ids = {"auto_update", "rec_gain", "rec_max", "rec_norm", "rec_src", "rec_mon", "bounce_len", "bounce_xf", "rec_lnorm"}}
 
 function CFG.save()
-  local t, o = {}, {"return "}
-  for _, id in ipairs(CFG.ids) do t[id] = params:get(id) end
+  local t, o, diff = {}, {"return "}, false
+  for _, id in ipairs(CFG.ids) do
+    t[id] = params:get(id)
+    if t[id] ~= CFG.t[id] then diff = true end
+  end
+  if not diff then return end
   ser(t, o)
   local f = io.open(CFG.path, "w")
   if f then f:write(table.concat(o)) f:close() end
@@ -1961,10 +1975,8 @@ end
 function CFG.init()
   local ok, t = pcall(loadfile(CFG.path, "t", {}))
   t = ok and type(t) == "table" and t or {}
-  for _, id in ipairs(CFG.ids) do
-    if t[id] then params:set(id, t[id]) end
-    params:set_action(id, CFG.save)
-  end
+  for _, id in ipairs(CFG.ids) do if t[id] then params:set(id, t[id]) end end
+  CFG.t = t
 end
 
 local function frame()
@@ -2121,4 +2133,5 @@ function cleanup()
   if sys.rev then params:set("reverb", sys.rev) end
   if sys.mon then params:set("monitor_level", sys.mon) end
   osc.event = nil
+  if CFG.t then CFG.save() end
 end

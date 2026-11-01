@@ -54,6 +54,7 @@ end
 
 function M.snap(st, k) return M.pitch(M.near(st, k), k) end
 function M.move(st, d, k) return M.pitch(M.near(st, k) + d, k) end
+function M.has(st, k) return M.snap(st, k) == st end
 
 local OPEN = {0, 7, 12, 19, 24}
 
