@@ -1,7 +1,7 @@
 --
 --
 --
---          grains v0.22 
+--          grains v0.23 
 --           @dddstudio
 --
 --
@@ -103,6 +103,7 @@ local fpend, PSX = {}, ".gstate"
 local pop = {t = 0}
 local vbar = {t = 0}
 local sys = {}
+local LIVE, LIVE_F, CAP_F = {t = 0}, "live", "capture"
 
 local SEEDF = {"tune", "mr", "cut", "lvl", "floor"}
 local LR, MD = {}, {}
@@ -194,6 +195,11 @@ local function freeze_refresh()
     V[i].frz, any = f, any or f
   end
   frz_any = any
+  local j = LIVE.slot
+  if j and (V[j].frz == true) ~= LIVE.frz then
+    LIVE.frz = V[j].frz == true
+    engine.live_run(LIVE.frz and 0 or 1)
+  end
   if not any then blink, blink_n = false, 0 end
   voices_dirty, dirty = true, true
 end
@@ -587,12 +593,14 @@ local function reroll_seeds(snap)
 end
 
 local function unload_view(v)
-  v.xf, v.raw, dirty = nil, nil, true
+  v.xf, v.raw, v.lhead, dirty = nil, nil, nil, true
   for L = 1, NL do v.pos[L] = 0 end
 end
 
 local function load_voice(i, path, len, at, retry)
+  if path == LIVE_F then return LIVE.start(i) elseif path == CAP_F then return end
   local v = V[i]
+  if LIVE.slot == i then LIVE.slot = nil end
   if not retry then v.tries = 0 end
   v.file, v.len, v.at = path, len or params:get("chunk"), at or 0
   unload_view(v)
@@ -604,6 +612,7 @@ end
 
 local function clear_voice(i)
   local v = V[i]
+  if LIVE.slot == i then LIVE.slot = nil end
   fpend[i], v.file, v.len, v.at, v.pin, v.tries = nil, nil, nil, 0, nil, 0
   unload_view(v)
   params:set(PID[i].file, AUDIO, true)
@@ -660,6 +669,7 @@ function REC.free_slot() for i = 1, NV do if not V[i].file then return i end end
 
 function REC.start(fresh)
   if REC.state then return end
+  if params:get("rec_mode") == 2 then return LIVE.go(fresh) end
   if fresh then
     REC.target = REC.free_slot()
     if not REC.target then return REC.finish("no free voices") end
@@ -796,6 +806,7 @@ local function move_slot(src, dst)
   local frz, lck = params:get("freeze" .. src), params:get("lock_v" .. src)
   V[dst], V[src] = V[src], new_voice()
   engine.move(src - 1, dst - 1)
+  if LIVE.slot == src then LIVE.slot = dst end
   for _, k in ipairs(MOVEP) do params:set(pd[k], pv[k], true) end
   params:set(ps.file, AUDIO, true) params:set(ps.bstart, 0, true) params:set(ps.bwidth, 100, true)
   params:set(ps.vol, VOL_DEF, true) params:set(ps.tune, 0, true)
@@ -812,7 +823,7 @@ local function move_slot(src, dst)
   pop_dirty, voices_dirty, dirty = true, true, true
 end
 
-local function locked(i) return V[i].file ~= nil and V[i].lck end
+local function locked(i) return V[i].file ~= nil and (V[i].lck or LIVE.slot == i) end
 
 local function locked_count()
   local n = 0
@@ -1170,6 +1181,7 @@ end
 
 local function pset_write(fn)
   local t, o = state_get(), {"return "}
+  for _, s in ipairs(t.v) do if s.f == CAP_F then s.f = nil end end
   t.sel, t.mo = sel, morph_on
   ser(t, o)
   local f = io.open(fn .. PSX, "w")
@@ -1303,6 +1315,72 @@ end
 
 local function pop_show(kind, txt) pop.kind, pop.txt, pop.t, dirty = kind, txt, util.time(), true end
 local function orig_block() if orig then pop_show("fx", "original pitch") return true end end
+
+function LIVE.args()
+  local mon = params:get("rec_lmon")
+  return amp(params:get("rec_gain")), params:get("rec_src") - 1, mon <= DB_FLOOR and 0 or amp(mon), params:get("rec_lpre") * 0.01, params:get("rec_norm") == 2 and amp(-6) or 0
+end
+
+function LIVE.input() if LIVE.slot then engine.live_in(LIVE.args()) end end
+
+local function live_cap(j)
+  V[j].file, V[j].lhead = CAP_F, nil
+  params:set(PID[j].file, AUDIO, true)
+end
+
+function LIVE.start(i)
+  local v, j, raw = V[i], LIVE.slot, {}
+  if j and j ~= i then live_cap(j) end
+  LIVE.slot, LIVE.frz = i, v.frz == true
+  v.file, v.len, v.at, v.tries = LIVE_F, nil, 0, 0
+  unload_view(v)
+  v.lpk = {}
+  for c = 0, matrix.RAW - 1 do raw[c], v.lpk[c] = 0, 0 end
+  v.raw, v.wgen = raw, nil
+  xf_in(v)
+  params:set(PID[i].file, LIVE_F, true)
+  refresh_layout()
+  push_vps(i)
+  engine.live_in(LIVE.args())
+  engine.live_run(LIVE.frz and 0 or 1)
+  engine.live_start(i - 1, params:get("rec_llen"))
+end
+
+function LIVE.go(fresh)
+  local i = fresh and REC.free_slot() or max(sel, 1)
+  if not i then return REC.finish("no free voices") end
+  if i == LIVE.slot then
+    live_cap(i)
+    LIVE.slot = nil
+    engine.live_stop()
+    return pop_show("fx", "live off")
+  end
+  if fresh then
+    local p = PID[i]
+    params:set(p.vol, VOL_DEF) params:set(p.tune, 0) params:set(p.bstart, 0) params:set(p.bwidth, 100)
+  end
+  LIVE.start(i)
+  sel = i
+  pop_show("fx", "live: S" .. i)
+end
+
+function LIVE.save()
+  local i = sel >= 1 and V[sel].file == CAP_F and sel or LIVE.slot
+  if not i then return pop_show("fx", "nothing live") end
+  local name = "in_live_" .. os.date("%y%m%d_%H%M%S")
+  LIVE.path = REC.dir .. name .. ".wav"
+  engine.live_save(i - 1, name)
+  pop_show("fx", "saving...")
+end
+
+function LIVE.saved(i, ok)
+  pop_show("fx", ok and "saved" or "save failed")
+  local v = V[i]
+  if ok and v and v.file == CAP_F then
+    v.file, v.len, v.at = LIVE.path, 3600, 0
+    params:set(PID[i].file, LIVE.path, true)
+  end
+end
 local function undo() pop_show("fx", Undo.undo() and "undo" or "nothing to undo") end
 local function redo() pop_show("fx", Undo.redo() and "redo" or "nothing to redo") end
 local function toggle(id) params:set(id, params:get(id) == 0 and 1 or 0) dirty = true end
@@ -1682,15 +1760,23 @@ local function setup_params()
   ctl("morph_slew", "Smoothing", 0, 8, "lin", 0.01, 0.1, "s")
   num("morph_seed", "Motion Seed", 1, 9999, 1)
 
-  group("bounce", "RECORD", 15)
+  group("bounce", "RECORD", 21)
   params:add_separator("Record Input")
-  ctl("rec_gain", "Gain", -24, 24, "lin", 0.5, 0, "dB")
+  ctl("rec_gain", "Gain", -24, 24, "lin", 0.5, 0, "dB", LIVE.input)
   ctl("rec_max", "Max Time", 2, 60, "lin", 1, 30, "s")
-  opt("rec_norm", "Normalize", NORM, 2)
-  opt("rec_src", "Source", {"stereo", "mono sum", "left", "right"}, 2)
+  opt("rec_norm", "Normalize", NORM, 2, LIVE.input)
+  opt("rec_src", "Source", {"stereo", "mono sum", "left", "right"}, 2, LIVE.input)
+  local function mon_str(p) local v = p:get() return v <= DB_FLOOR and "OFF" or string.format("%.1f dB", v) end
   ctl("rec_mon", "Monitor", DB_FLOOR, 12, "lin", 0.5, 0, "dB")
-  str("rec_mon", function(p) local v = p:get() return v <= DB_FLOOR and "OFF" or string.format("%.1f dB", v) end)
+  str("rec_mon", mon_str)
   trig("do_clean_in", "Clean Input Recordings!", function() REC.clean("input") end)
+  params:add_separator("Live Input")
+  opt("rec_mode", "Hold K2/K3", {"record once", "go live"}, 1)
+  ctl("rec_llen", "Live Length", 2, 30, "lin", 0.5, 8, "s")
+  ctl("rec_lpre", "Live Overdub", 0, 95, "lin", 1, 0, "%", LIVE.input)
+  ctl("rec_lmon", "Live Monitor", DB_FLOOR, 12, "lin", 0.5, DB_FLOOR, "dB", LIVE.input)
+  str("rec_lmon", mon_str)
+  trig("do_live_save", "Save Live!", LIVE.save)
   params:add_separator("Record Loop")
   ctl("bounce_len", "Loop Length", 1, 60, "lin", 0.5, 8, "s")
   ctl("bounce_xf", "Crossfade", 0.1, 5, "lin", 0.1, 1, "s")
@@ -1806,6 +1892,13 @@ local function setup_osc()
     elseif path == "/grains/rec_level" then
       local l, r = args[1] or 0, args[2] or 0
       REC.level, REC.level_r, REC.metered, REC.peak = l, r, true, max(REC.peak, l, r)
+    elseif path == "/grains/live" then
+      local v, c = V[i], args[2]
+      if i == LIVE.slot and v.lpk and c then
+        v.lpk[c], v.lhead, LIVE.wf = max(args[3] or 0, 0), (c + 1) % matrix.RAW, true
+      end
+    elseif path == "/grains/live_saved" then
+      LIVE.saved(i, (args[2] or 0) > 0)
     elseif path == "/grains/rec_done" then
       REC.done((args[1] or 0) > 0)
     end
@@ -1958,7 +2051,7 @@ local function morph_skip(id)
 end
 
 local CFG = {path = norns.state.data .. "settings",
-  ids = {"auto_update", "rec_gain", "rec_max", "rec_norm", "rec_src", "rec_mon", "bounce_len", "bounce_xf", "rec_lnorm"}}
+  ids = {"auto_update", "rec_gain", "rec_max", "rec_norm", "rec_src", "rec_mon", "bounce_len", "bounce_xf", "rec_lnorm", "rec_mode", "rec_llen", "rec_lpre", "rec_lmon"}}
 
 function CFG.save()
   local t, o, diff = {}, {"return "}, false
@@ -1993,6 +2086,15 @@ local function frame()
   Keys.tick(now)
   if font.tick(now) then dirty = true end
   FXM.check(now)
+  if LIVE.wf and LIVE.slot and now - LIVE.t >= 0.25 then
+    local v, mx = V[LIVE.slot], 0.002
+    local pk, raw = v.lpk, v.raw
+    if pk and raw then
+      for c = 0, matrix.RAW - 1 do mx = max(mx, pk[c]) end
+      for c = 0, matrix.RAW - 1 do raw[c] = math.sqrt(pk[c] / mx) end
+    end
+    LIVE.wf, LIVE.t, v.wgen, dirty = false, now, nil, true
+  end
   if frz_any then
     blink_n = blink_n + 1
     if blink_n >= 24 then blink_n, blink, dirty = 0, not blink, true end

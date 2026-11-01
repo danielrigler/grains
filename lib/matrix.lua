@@ -190,6 +190,7 @@ end
 
 local function cell_over(v, i, nl, sel, blink)
   local x, y = CX[i], CY[i]
+  if v.lhead and not v.xf then R(5, x + floor(v.lhead * CW / M.RAW), y, 1, BOT + 1) end
   if nl > 0 and not v.xf then
     local k0, k1, pos, rd = K0[i], K1[i], v.pos, rails(nl)
     local half = rd.half
