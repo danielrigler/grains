@@ -2026,8 +2026,7 @@ function enc(n, d)
     end
   elseif sel >= 1 then
     region_grab(sel)
-    local p = PID[sel]
-    if n == 2 then params:set(p.bstart, clamp(p.startp:get() + d, 0, 100 - p.widthp:get())) else params:delta(p.bwidth, d) end
+    params:delta(PID[sel][n == 2 and "bstart" or "bwidth"], d)
   end
 end
 
