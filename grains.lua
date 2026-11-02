@@ -1499,7 +1499,10 @@ local function setup_params()
   for i = 1, NV do
     params:add_file(PID[i].file, "S" .. i, AUDIO)
     act(PID[i].file, function(path) if path and path ~= "" and path ~= "-" then fpend[i] = path end end)
-    str(PID[i].file, function(p) return short_name(p:get()) end)
+    str(PID[i].file, function(p)
+      local f = V[i].file
+      return f == LIVE_F and "live input" or f == CAP_F and "live (unsaved)" or short_name(p:get())
+    end)
   end
 
   FXM.first = #params.params + 1
