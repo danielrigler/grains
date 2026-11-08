@@ -96,7 +96,7 @@ end
 local V, PID, G = {}, {}, {}
 local nva, lcap, sel, dirty = -1, -1, 0, true
 local voices_dirty, pop_dirty, layout_busy, dicing, trimming = false, true, false, false, false
-local blink, blink_n, frz_any, orig, morph_on = false, 0, false, false, false
+local blink, blink_n, frz_any, orig, morph_on, pamt = false, 0, false, false, false, 1
 local DENSP, dfrac, WIN_FN, WIN_N, wbuf = nil, 0, nil, 0, {}
 local glide, sglide, xfing, shown_files = 0, 0, false, nil
 local file_list, scanned_dir, scan_busy, scan_wait = {}, nil, false, nil
@@ -112,7 +112,7 @@ for k = 1, 5 do LR[k], MD[k] = "lrate" .. k, "mididiff" .. k end
 for i = 1, NV do PID[i] = {bstart = i .. "bstart", bwidth = i .. "bwidth", vol = i .. "vol", tune = i .. "tune", file = i .. "file"} end
 
 local VP = {
-  {"revprob", "reverse", function(v) return orig and 0 or v * 0.01 end},
+  {"revprob", "reverse", function(v) return v * 0.01 * pamt end},
   {"rateSlew", "rateslew"},
   {"panwidth", "panwidth", function(v) return v * 0.01 end},
   {"res", "res", function(v) return (100 - v) * 0.007 end},
@@ -273,17 +273,14 @@ local function push_per_voice()
     local ivol, itune = pid.volp:get(), pid.tunep:get()
     v.volb = clamp((ivol - DB_FLOOR) / vrange, 0, 1)
     if not Sync.von or not v.volf then v.volf = v.volb end
-    v.pitchf = orig and 0 or clamp(itune / Shuffle.PITCH_HI, -1, 1)
+    local on = abs(s.tune) < pamt
+    v.pitchf = on and clamp(itune / Shuffle.PITCH_HI, -1, 1) or 0
     local var, sc = ov(h, "variance") * 0.01, ov(h, "scale")
-    if orig then
-      vsend(i, "vrate", 1)
-      for k = 1, 5 do vsend(i, LR[k], 1) end
-    else
-      local deg = Scale.round(s.tune * ov(h, "spread") * 0.02 * Scale.size(sc)) + Scale.near(itune, sc)
-      local vst = Scale.pitch(deg, sc)
-      vsend(i, "vrate", ratio(ov(h, "tuning") + vst))
-      for k = 1, 5 do vsend(i, LR[k], ratio(Scale.pitch(deg + Scale.round(Scale.steps(ov(h, MD[k]), sc) * lsp), sc) - vst)) end
-    end
+    local deg = on and Scale.round(s.tune * ov(h, "spread") * 0.02 * Scale.size(sc)) + Scale.near(itune, sc) or 0
+    local vst = Scale.pitch(deg, sc)
+    vsend(i, "vrate", on and ratio(ov(h, "tuning") + vst) or 1)
+    vsend(i, "pamt", pamt)
+    for k = 1, 5 do vsend(i, LR[k], ratio(Scale.pitch(deg + Scale.round(Scale.steps(ov(h, MD[k]), sc) * lsp), sc) - vst)) end
     local emod, mr, pr, cut = 2 ^ (s.mr * var * 1.3), ov(h, "motionrate"), ov(h, "pitchrate"), ov(h, "cutoff")
     v.mr = (frz or mr <= RATE_OFF) and 0 or clamp(mr * emod, 0.02, 12)
     vsend(i, "mrate", v.mr)
@@ -1521,7 +1518,11 @@ local function setup_params()
     if not layout_busy then dfrac = DENSP.max > 0 and clamp(v / DENSP.max, 0, 1) or 0 end
     pop_dirty = true
   end)
-  flag("pitch_lock", "Original Pitch", function(v) orig, voices_dirty = v == 1, true push_vp(VP[1]) end)
+  ctl("pitch_amt", "Pitch Amount", 0, 100, "lin", 1, 100, "%", function(v)
+    pamt, voices_dirty = v * 0.01, true
+    orig = pamt <= 0
+    push_vp(VP[1])
+  end)
   ctl("tuning", "Tuning", -48, 48, "lin", 1, 0, "st")
   opt("scale", "Scale", Scale.NAMES, Scale.DEFAULT)
   ctl("spread", "Voice Spread", 0, 100, "lin", 1, 75, "%")

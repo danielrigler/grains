@@ -684,10 +684,10 @@ Engine_grains : CroneEngine {
             [\grainsloop, \grainsloopeco, \grainsloopbin, \grainsloopecobin, \grainslooplv, \grainsloopecolv, \grainsloopbinlv, \grainsloopecobinlv].do({ arg defName, n;
                 var eco = n % 2, bin = (n div: 2) % 2, lv = n div: 4;
                 keep.(SynthDef(defName, {
-                    arg bus, buf, statebus = 0, posStart = 0, posEnd = 48000, iw = 10, mrate = 1, prate = 1, gate = 1, rel = 1, rateSlew = 1.5, vrate = 1, weight1 = 14, weight2 = 8, weight3 = 3, weight4 = 6, weight5 = 4, lrate1 = 1, lrate2 = 0.5, lrate3 = 4, lrate4 = 2, lrate5 = 0.25, lamp1 = 1, lamp2 = 1.5849, lamp3 = 0.1259, lamp4 = 0.3981, lamp5 = 1.2589, revprob = 0.1, panwidth = 0.5, amul = 0.75, aadd = 1.25, kTune = 3, kDir = 6, kAmp = 4.5, kPan = 8, phAmp = 0, phPan = 0, lagAmp = 0.4, i_intro = 1, head = -1;
+                    arg bus, buf, statebus = 0, posStart = 0, posEnd = 48000, iw = 10, mrate = 1, prate = 1, gate = 1, rel = 1, rateSlew = 1.5, vrate = 1, pamt = 1, weight1 = 14, weight2 = 8, weight3 = 3, weight4 = 6, weight5 = 4, lrate1 = 1, lrate2 = 0.5, lrate3 = 4, lrate4 = 2, lrate5 = 0.25, lamp1 = 1, lamp2 = 1.5849, lamp3 = 0.1259, lamp4 = 0.3981, lamp5 = 1.2589, revprob = 0.1, panwidth = 0.5, amul = 0.75, aadd = 1.25, kTune = 3, kDir = 6, kAmp = 4.5, kPan = 8, phAmp = 0, phPan = 0, lagAmp = 0.4, i_intro = 1, head = -1;
                     var frames = BufFrames.ir(buf).max(4096), edge = (SampleRate.ir * 0.2).min(frames * 0.02).max((frames * 0.005).min(256)), iu = (frames - (edge * 2)).reciprocal;
-                    var boot = Impulse.kr(0), idx = TWindex.kr(boot + Dust.kr(prate / kTune), [weight1, weight2, weight3, weight4, weight5], 1);
-                    var rate = Lag.kr(Select.kr(idx, [lrate1, lrate2, lrate3, lrate4, lrate5]) * (vrate * BufRateScale.ir(buf)) * (TRand.kr(0, 1, Impulse.kr(mrate / kDir)) >= revprob).madd(2, -1), rateSlew);
+                    var boot = Impulse.kr(0), hop = boot + Dust.kr(prate / kTune), idx = TWindex.kr(hop, [weight1, weight2, weight3, weight4, weight5], 1);
+                    var rate = Lag.kr(Select.kr(TRand.kr(0, 1, hop) < pamt, [1, Select.kr(idx, [lrate1, lrate2, lrate3, lrate4, lrate5])]) * (vrate * BufRateScale.ir(buf)) * (TRand.kr(0, 1, Impulse.kr(mrate / kDir)) >= revprob).madd(2, -1), rateSlew);
                     var t = LocalIn.kr(1), sw = ToggleFF.kr(t), nsw = 1 - sw, resetTo = Select.kr(rate > 0, [posEnd, posStart]), kinc = rate * (SampleRate.ir * ControlDur.ir);
                     var pos = Phasor.kr(t, kinc, 0, frames, resetTo), sl = (rate.abs * iw).clip(33.333333, 333.33333), xfr = Slew.kr(sw, sl, sl), s1, s2, sg;
                     LocalOut.kr(BinaryOpUGen('==', xfr, sw) > InRange.kr(pos, posStart, posEnd));
