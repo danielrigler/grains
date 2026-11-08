@@ -19,7 +19,7 @@ local W = 16
 local led, sent, rq, pa, pb, anchor, held, used = {}, {}, {}, {}, {}, {}, {}, {}
 local kl, kh, ka, kb, ke, bprev = {}, {}, {}, {}, {}, {}
 local scan, sweep, sweep_on, backlog, resend, modv = 0, 0, false, true, nil, nil
-local rep_d, rep_t, rep_k, rep_v
+local rep_d, rep_t, rep_k, rep_v, pre
 local tn = 0
 
 local function toga_path()
@@ -180,8 +180,13 @@ local function fx_key(x, y, z)
   if v then used[v] = true end
   if held[(y == UP and DN or UP) * 32 + x] then
     rep_k = nil
+    if x == 1 and cfg.freeze then
+      params:set_raw(FX[1][1], pre)
+      return cfg.freeze()
+    end
     act(x, 0, nil, v)
   else
+    if x == 1 then pre = params:get_raw(FX[1][1]) end
     rep_d, rep_t, rep_k, rep_v = y == UP and 1 or -1, util.time() + REP_WAIT, k, v
     act(x, rep_d, true, v)
   end

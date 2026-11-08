@@ -53,6 +53,7 @@
 -- 14: reseed/randomize
 -- 15: volume, 16: density
 -- both keys: reset/off
+-- reverb both keys: freeze
 -- hold row +15: vol +16: lock/frz
 --
 -- Based on Graintopia by
@@ -1198,7 +1199,7 @@ local function pset_read(fn)
 end
 
 local UN = {ids = {}}
-local UN_SKIP = {source = true, src_norm = true, morph = true, density = true, quality = true, rev_type = true, d_series = true, binaural = true}
+local UN_SKIP = {source = true, src_norm = true, rev_freeze = true, morph = true, density = true, quality = true, rev_type = true, d_series = true, binaural = true}
 
 function UN.build(first, last)
   local P = params
@@ -1400,6 +1401,7 @@ local function rev_route()
   local db, sysrev = params:get("reverb_mix"), params:get("rev_type") == 2
   local on = db > -40
   local w = (on and not sysrev) and amp(db) or 0
+  if (sysrev or not on) and params:get("rev_freeze") == 1 then params:set("rev_freeze", 0) end
   if sys.rev_w ~= w then sys.rev_w = w engine.rev_mix(w) end
   if sys.rev == nil then return end
   if not (sysrev and on) then return params:set("reverb", 1) end
@@ -1568,10 +1570,15 @@ local function setup_params()
 
   FXM.split = #params.params + 1
 
-  group("reverb", "REVERB", 9)
+  group("reverb", "REVERB", 10)
   opt("rev_type", "Type", {"plate", "system"}, 1, function() rev_route() Sync.vis() end)
   tap("reverb_mix", "Mix", -40, 18, -40, 0, "dB", rev_route)
   str("reverb_mix", function(p) return fast_db(p:get()) end)
+  flag("rev_freeze", "Freeze", function(v)
+    if v == 1 and (params:get("reverb_mix") <= -40 or params:get("rev_type") == 2) then return params:set("rev_freeze", 0) end
+    send("rev_freeze", v)
+  end)
+  params:set_save("rev_freeze", false)
   ctl("rev_decay", "Decay", 0.3, 60, "exp", 0, 4, "s", function(v) send("rev_decay", 10 ^ (-0.468 / v)) end)
   ctl("rev_damp", "Damping", 0, 100, "lin", 1, 40, "%", function(v) send("rev_damp", math.exp(-2.356194 * (1 / 30) ^ (v * 0.01))) end)
   ctl("rev_pre", "Pre Delay", 0, 250, "lin", 1, 20, "ms", 0.001)
@@ -2053,7 +2060,7 @@ function key(n, z)
   if z == 1 then Keys.press(n) else Keys.release(n) end
 end
 
-local MORPH_SKIP = {morph = true, source = true, src_norm = true, chunk = true, lseed = true, level = true, quality = true, rev_type = true, d_series = true, binaural = true}
+local MORPH_SKIP = {morph = true, source = true, src_norm = true, rev_freeze = true, chunk = true, lseed = true, level = true, quality = true, rev_type = true, d_series = true, binaural = true}
 local function morph_skip(id)
   return MORPH_SKIP[id] or id:find("^morph") or id:find("^vlfo") or id:find("^do_") or id:find("^lock_")
     or id:find("^freeze") or id:find("^rec_") or id:find("^bounce_") or id:find("^rlfo")
@@ -2222,6 +2229,13 @@ function init()
       end
       pop_show("fx", (p == "rlfo" and "region LFO: " or "vol LFO: ") .. (v <= 0 and "OFF"
         or p == "rlfo" and string.format("%d%%", floor(v + 0.5)) or string.format("%.1f dB", dp:get())))
+    end,
+    freeze = function()
+      local on = params:get("rev_freeze") == 1
+      if not on and params:get("rev_type") == 2 then return pop_show("fx", "freeze: plate only") end
+      if not on and params:get("reverb_mix") <= -40 then return pop_show("fx", "freeze: reverb is off") end
+      toggle("rev_freeze")
+      pop_show("fx", "reverb freeze: " .. (on and "OFF" or "ON"))
     end,
     trig = function(top)
       Undo.mark()

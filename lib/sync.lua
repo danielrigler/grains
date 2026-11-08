@@ -259,7 +259,7 @@ end
 function S.vis()
   local pl, d, on, v, r = pv("rev_type") == 1, S.dly_synced(), S.mo_on(), S.von, S.ron
   local m = on and S.mo_synced()
-  vis(pl, "rev_series", "d_series", "rev_decay", "rev_damp", "rev_pre", "rev_mdepth", "rev_mrate")
+  vis(pl, "rev_freeze", "rev_series", "d_series", "rev_decay", "rev_damp", "rev_pre", "rev_mdepth", "rev_mrate")
   vis(d, "d_div") vis(not d, "d_time")
   vis(on, "morph_depth", "morph_shape", "morph_sync", "morph_slew")
   vis(m, "morph_div") vis(on and not m, "morph_rate")

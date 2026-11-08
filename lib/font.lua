@@ -13,7 +13,7 @@ local GLYPH = {
 local IDS = {"reverb_mix", "d_mix", "sh_mix", "sh_mod", "bc_mix", "bc_mod", "wf_mix", "reso_mix", "gl_ratio", "gl_mix",
   "tape_mix", "shaper_mix", "wobble_mix", "reel_mix", "genloss_mix", "ringmod_mix", "spiral_mix", "sub_mix", "ott_mix",
   "stchorus_mix", "m_width", "dimension_mix", "vibe_mix", "haas", "binaural", "rspeed", "eq_low", "eq_mid", "eq_high",
-  "tilt", "cutoff", "vhpf", "d_sync", "morph_auto", "morph_sync", "vlfo", "vlfo_sync"}
+  "tilt", "cutoff", "vhpf", "d_sync", "morph_auto", "morph_sync", "vlfo", "vlfo_sync", "rev_freeze"}
 
 local fx, objs = {}, {}
 local function poll() for i, id in ipairs(IDS) do fx[id] = objs[i]:get() end end
@@ -58,7 +58,7 @@ local SPECS = {
     function(c) return max(c.tape_mix == 2 and 25 or 0, c.shaper_mix, c.wobble_mix, c.reel_mix, c.genloss_mix) end},
   {"X", "grains_shimmer", mix("sh_mix")[1], function(c) return c.sh_mod == 2 and c.sh_mix * sh_lfo(now_t) or c.sh_mix end},
   {"D", "grains_delay", table.unpack(mix("d_mix"))},
-  {"R", "grains_reverb", function(c) return c.reverb_mix > -40 end, function(c) return (c.reverb_mix + 40) / 58 * 100 end},
+  {"R", "grains_reverb", function(c) return c.reverb_mix > -40 end, function(c) return c.rev_freeze == 1 and 100 or (c.reverb_mix + 40) / 58 * 100 end},
   {"Z", "grains_dimension", function(c) return c.m_width ~= 100 or c.haas == 2 or c.binaural == 2 or c.rspeed > 0 end,
     function(c) return max(abs(c.m_width - 100) / 100, (c.haas == 2 or c.binaural == 2) and 0.25 or 0, c.rspeed) * 100 end},
   {"C", "grains_chorus", function(c) return c.dimension_mix > 0 or c.stchorus_mix > 0 or c.vibe_mix > 0 end,
@@ -68,7 +68,7 @@ local SPECS = {
 local OFF = {
   F = {cutoff = 20000, vhpf = 20}, E = {eq_low = 0, eq_mid = 0, eq_high = 0, tilt = 0}, B = {bc_mix = 0},
   O = {reso_mix = 0}, W = {wf_mix = 0}, M = {ringmod_mix = 0}, U = {sub_mix = 0}, c = {ott_mix = 0},
-  S = {spiral_mix = 0}, G = {gl_ratio = 0}, X = {sh_mix = 0}, D = {d_mix = 0}, R = {reverb_mix = -40},
+  S = {spiral_mix = 0}, G = {gl_ratio = 0}, X = {sh_mix = 0}, D = {d_mix = 0}, R = {reverb_mix = -40, rev_freeze = 0},
   T = {tape_mix = 1, shaper_mix = 0, wobble_mix = 0, reel_mix = 0, genloss_mix = 0},
   Z = {m_width = 100, haas = 1, binaural = 1, rspeed = 0}, C = {dimension_mix = 0, stchorus_mix = 0, vibe_mix = 0}
 }

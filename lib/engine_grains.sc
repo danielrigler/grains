@@ -1024,23 +1024,23 @@ Engine_grains : CroneEngine {
             }));
 
             keep.(SynthDef(\grainsverb, {
-                arg bus, dbus, mix = 0, ser = 0.25, decay = 0.9, damp = 0.3, pre = 0.02, mdepth = 0.3, mrate = 0.5, flush = 0;
-                var x = In.ar(bus, 2), r = 29761.reciprocal, kill = 1 - flush;
+                arg bus, dbus, mix = 0, ser = 0.25, decay = 0.9, damp = 0.3, pre = 0.02, mdepth = 0.3, mrate = 0.5, flush = 0, frz = 0;
+                var x = In.ar(bus, 2), r = 29761.reciprocal, kill = 1 - flush, fz = Lag.kr(frz, 0.1), dk = decay + ((0.9999 - decay) * fz), dm = damp * (1 - fz);
                 var g = { arg t, k; k.sign * (-3 * t / log10(k.abs)) };
                 var ap = { arg s, t, k; AllpassN.ar(s, t * r, t * r, g.(t * r, k)) };
                 var m = SinOsc.kr(mrate * [1, 0.8], [0, pi], mdepth * 32 * r);
-                var d = DelayN.ar(HPF.ar(x - (In.ar(dbus, 2) * (1 - Lag.kr(ser, 0.05))), 80) * kill, 0.25, pre);
+                var d = DelayN.ar(HPF.ar(x - (In.ar(dbus, 2) * (1 - Lag.kr(ser, 0.05))), 80) * (kill * (1 - fz)), 0.25, pre);
                 var a1, a2, a3, a4, b1, b2, b3, b4, wl, wr;
                 d = ap.(d, [142, 151], 0.75);
                 d = ap.(d, [107, 113], 0.75);
                 d = ap.(d, [379, 397], 0.625);
                 d = ap.(d, [277, 289], 0.625);
-                a1 = AllpassC.ar(d[1] + (LocalIn.ar(1) * decay), 704 * r, 672 * r + m[0], g.(672 * r, -0.7));
-                a2 = OnePole.ar(DelayN.ar(a1, 4453 * r, 4453 * r), damp) * decay;
+                a1 = AllpassC.ar(d[1] + (LocalIn.ar(1) * dk), 704 * r, 672 * r + m[0], g.(672 * r, -0.7));
+                a2 = OnePole.ar(DelayN.ar(a1, 4453 * r, 4453 * r), dm) * dk;
                 a3 = ap.(a2, 1800, 0.5);
                 a4 = DelayN.ar(a3, 3720 * r, 3720 * r);
-                b1 = AllpassC.ar(d[0] + (a4 * decay), 940 * r, 908 * r + m[1], g.(908 * r, -0.7));
-                b2 = OnePole.ar(DelayN.ar(b1, 4217 * r, 4217 * r), damp) * decay;
+                b1 = AllpassC.ar(d[0] + (a4 * dk), 940 * r, 908 * r + m[1], g.(908 * r, -0.7));
+                b2 = OnePole.ar(DelayN.ar(b1, 4217 * r, 4217 * r), dm) * dk;
                 b3 = ap.(b2, 2656, 0.5);
                 b4 = DelayN.ar(b3, 3163 * r, 3163 * r);
                 LocalOut.ar(b4 * kill);
@@ -1153,7 +1153,7 @@ Engine_grains : CroneEngine {
             [fxSpiral, \spiral_bpm, \bpm, \spiral_div, \div, \spiral_feedback, \feedback, \spiral_rise, \rise, \spiral_glide, \glide, \spiral_span, \span, \spiral_tone, \tone],
             [fxSub, \sub_detune, \detune],
             [fxVibe, \vibe_drift, \drift],
-            [fxVerb, \rev_series, \ser, \rev_decay, \decay, \rev_damp, \damp, \rev_pre, \pre, \rev_mdepth, \mdepth, \rev_mrate, \mrate]
+            [fxVerb, \rev_series, \ser, \rev_decay, \decay, \rev_damp, \damp, \rev_pre, \pre, \rev_mdepth, \mdepth, \rev_mrate, \mrate, \rev_freeze, \frz]
         ].do({ arg row; var syn = row[0]; row.drop(1).pairsDo({ arg cmd, key; this.addCommand(cmd, "f", { arg msg; syn.set(key, msg[1]) }) }) });
         this.addCommand(\d_wdepth, "f", { arg msg; fxDelay.set(\w_depth, msg[1] / 100); });
         [
