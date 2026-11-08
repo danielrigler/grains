@@ -268,16 +268,17 @@ local function push_vol()
 end
 Sync.vpush = push_vol
 
-local function lad(t, fifth, thr)
+local function lad(t, tun, fifth, thr)
   local n, q = abs(t), t < 0 and 5 or 7
   local x = n * pamt
   if x >= n then return t end
-  local o = x // 12 * 12
+  local b = (t < 0 and -tun or tun) % 12
+  local o = (x - b) // 12 * 12 + b
   local lo, hi = o, o + 12
   if fifth then
     if x - o >= q then lo = o + q else hi = o + q end
   end
-  hi = min(hi, n)
+  lo, hi = max(lo, 0), min(hi, n)
   local r = x - lo > thr * (hi - lo) and hi or lo
   return t < 0 and -r or r
 end
@@ -296,7 +297,7 @@ local function push_per_voice()
     local fifth = Scale.fifth(sc)
     local deg = Scale.round(s.tune * ov(h, "spread") * 0.02 * Scale.size(sc)) + Scale.near(itune, sc)
     local tun, th = ov(h, "tuning"), THR[i]
-    for k = 1, 5 do vsend(i, LR[k], ratio(lad(tun + Scale.pitch(deg + Scale.round(Scale.steps(ov(h, MD[k]), sc) * lsp), sc), fifth, th[k]))) end
+    for k = 1, 5 do vsend(i, LR[k], ratio(lad(tun + Scale.pitch(deg + Scale.round(Scale.steps(ov(h, MD[k]), sc) * lsp), sc), tun, fifth, th[k]))) end
     local emod, mr, pr, cut = 2 ^ (s.mr * var * 1.3), ov(h, "motionrate"), ov(h, "pitchrate"), ov(h, "cutoff")
     v.mr = (frz or mr <= RATE_OFF) and 0 or clamp(mr * emod, 0.02, 12)
     vsend(i, "mrate", v.mr)
