@@ -1,7 +1,7 @@
 --
 --
 --
---          grains v0.23 
+--          grains v0.24 
 --           @dddstudio
 --
 --
@@ -288,7 +288,7 @@ local function push_per_voice()
     vsend(i, "mrate", v.mr)
     vsend(i, "prate", (frz or pr <= RATE_OFF) and 0 or clamp(pr * emod, 0.02, 12))
     vsend(i, "cutoff", cut >= LPF_OFF - 1 and LPF_OFF or clamp(cut * 2 ^ (s.cut * var * 2.6), 90, LPF_OFF))
-    v.vbase = ivol <= -59.5 and -100 or clamp(LEVEL_REF + ivol + (LAYER_TRIM[v.act] or 0) + s.lvl * var * 7, -100, LEVEL_REF + 26)
+    v.vbase = ivol <= -59.5 and -100 or clamp(LEVEL_REF + ivol + (LAYER_TRIM[v.act] or 0) + s.lvl * var * 7 + (G.src_norm == 2 and v.ndb or 0), -100, LEVEL_REF + 26)
     if not Sync.von then vsend(i, "vamp", amp(v.vbase)) end
     vsend(i, "ampfloor", clamp(ov(h, "ampfloor") * 0.01 + s.floor * var * 0.35, 0, 1))
   end
@@ -593,7 +593,7 @@ local function reroll_seeds(snap)
 end
 
 local function unload_view(v)
-  v.xf, v.raw, v.pk, v.lhead, dirty = nil, nil, nil, nil, true
+  v.xf, v.raw, v.pk, v.lhead, v.ndb, dirty = nil, nil, nil, nil, 0, true
   for L = 1, NL do v.pos[L] = 0 end
 end
 
@@ -1198,7 +1198,7 @@ local function pset_read(fn)
 end
 
 local UN = {ids = {}}
-local UN_SKIP = {source = true, morph = true, density = true, quality = true, rev_type = true, d_series = true, binaural = true}
+local UN_SKIP = {source = true, src_norm = true, morph = true, density = true, quality = true, rev_type = true, d_series = true, binaural = true}
 
 function UN.build(first, last)
   local P = params
@@ -1333,7 +1333,7 @@ function LIVE.start(i)
   local keep = v.file ~= nil and v.raw ~= nil and v.pk ~= nil
   if j and j ~= i then live_cap(j) end
   LIVE.slot, LIVE.frz = i, v.frz == true
-  v.file, v.len, v.at, v.tries = LIVE_F, nil, 0, 0
+  v.file, v.len, v.at, v.tries, v.ndb, voices_dirty = LIVE_F, nil, 0, 0, 0, true
   if keep then
     LIVE.wf = true
   else
@@ -1805,7 +1805,7 @@ local function setup_params()
     end)
   end
 
-  group("src", "SOURCE", NV + 6)
+  group("src", "SOURCE", NV + 7)
   trig("do_clear", "Unload All", function() Undo.mark() clear_all() end)
   trig("do_reload", "Load Random", src.reload)
   for n = 1, NV do trig("do_load" .. n, "Load " .. n .. " Random", function() Undo.mark() load_n(n) end) end
@@ -1814,6 +1814,7 @@ local function setup_params()
   str("source", function(p) return short_name(p:get(), true) end)
   trig("do_rescan", "Re-scan Folder", function() scanned_dir = nil scan_source() end)
   ctl("chunk", "Slice Length", 2, 60, "lin", 0.5, 15, "s")
+  opt("src_norm", "Normalize", OFFON, 2, function(v) G.src_norm, voices_dirty = v, true end)
   trig("do_reslice", "Re-slice", function() Undo.mark() src.reslice() end)
 
   for _, p in ipairs(VP) do
@@ -1889,7 +1890,7 @@ local function setup_osc()
         mx = max(mx, pk[c])
       end
       for c = 0, N - 1 do raw[c] = mx > 0 and math.sqrt(pk[c] / mx) or 0 end
-      v.pk = pk
+      v.pk, v.ndb, voices_dirty = pk, v.file ~= LIVE_F and clamp(-20 * math.log(max(mx, 1e-4), 10), -12, 15) or 0, true
       local at = args[N + 2]
       v.at = type(at) == "number" and at >= 0 and at or 0
       v.raw, v.wgen = raw, nil
@@ -2052,7 +2053,7 @@ function key(n, z)
   if z == 1 then Keys.press(n) else Keys.release(n) end
 end
 
-local MORPH_SKIP = {morph = true, source = true, chunk = true, lseed = true, level = true, quality = true, rev_type = true, d_series = true, binaural = true}
+local MORPH_SKIP = {morph = true, source = true, src_norm = true, chunk = true, lseed = true, level = true, quality = true, rev_type = true, d_series = true, binaural = true}
 local function morph_skip(id)
   return MORPH_SKIP[id] or id:find("^morph") or id:find("^vlfo") or id:find("^do_") or id:find("^lock_")
     or id:find("^freeze") or id:find("^rec_") or id:find("^bounce_") or id:find("^rlfo")
