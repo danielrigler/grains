@@ -107,8 +107,12 @@ local sys = {}
 local LIVE, LIVE_F, CAP_F = {t = 0}, "live", "capture"
 
 local SEEDF = {"tune", "mr", "cut", "lvl", "floor"}
-local LR, MD = {}, {}
+local LR, MD, THR = {}, {}, {}
 for k = 1, 5 do LR[k], MD[k] = "lrate" .. k, "mididiff" .. k end
+for i = 1, NV do
+  THR[i] = {}
+  for k = 1, 5 do THR[i][k] = (k * 0.6 + (i - 1) * 0.618034 % 1 * 0.2) % 1 end
+end
 for i = 1, NV do PID[i] = {bstart = i .. "bstart", bwidth = i .. "bwidth", vol = i .. "vol", tune = i .. "tune", file = i .. "file"} end
 
 local VP = {
@@ -264,6 +268,20 @@ local function push_vol()
 end
 Sync.vpush = push_vol
 
+local function lad(t, fifth, thr)
+  local n, q = abs(t), t < 0 and 5 or 7
+  local x = n * pamt
+  if x >= n then return t end
+  local o = x // 12 * 12
+  local lo, hi = o, o + 12
+  if fifth then
+    if x - o >= q then lo = o + q else hi = o + q end
+  end
+  hi = min(hi, n)
+  local r = x - lo > thr * (hi - lo) and hi or lo
+  return t < 0 and -r or r
+end
+
 local function push_per_voice()
   voices_dirty, dirty = false, true
   local lsp, vrange = G.lspread * 0.01, Shuffle.VOL_MAX_DB - DB_FLOOR
@@ -273,14 +291,12 @@ local function push_per_voice()
     local ivol, itune = pid.volp:get(), pid.tunep:get()
     v.volb = clamp((ivol - DB_FLOOR) / vrange, 0, 1)
     if not Sync.von or not v.volf then v.volf = v.volb end
-    local on = abs(s.tune) < pamt
-    v.pitchf = on and clamp(itune / Shuffle.PITCH_HI, -1, 1) or 0
+    v.pitchf = clamp(itune * pamt / Shuffle.PITCH_HI, -1, 1)
     local var, sc = ov(h, "variance") * 0.01, ov(h, "scale")
-    local deg = on and Scale.round(s.tune * ov(h, "spread") * 0.02 * Scale.size(sc)) + Scale.near(itune, sc) or 0
-    local vst = Scale.pitch(deg, sc)
-    vsend(i, "vrate", on and ratio(ov(h, "tuning") + vst) or 1)
-    vsend(i, "pamt", pamt)
-    for k = 1, 5 do vsend(i, LR[k], ratio(Scale.pitch(deg + Scale.round(Scale.steps(ov(h, MD[k]), sc) * lsp), sc) - vst)) end
+    local fifth = Scale.fifth(sc)
+    local deg = Scale.round(s.tune * ov(h, "spread") * 0.02 * Scale.size(sc)) + Scale.near(itune, sc)
+    local tun, th = ov(h, "tuning"), THR[i]
+    for k = 1, 5 do vsend(i, LR[k], ratio(lad(tun + Scale.pitch(deg + Scale.round(Scale.steps(ov(h, MD[k]), sc) * lsp), sc), fifth, th[k]))) end
     local emod, mr, pr, cut = 2 ^ (s.mr * var * 1.3), ov(h, "motionrate"), ov(h, "pitchrate"), ov(h, "cutoff")
     v.mr = (frz or mr <= RATE_OFF) and 0 or clamp(mr * emod, 0.02, 12)
     vsend(i, "mrate", v.mr)
