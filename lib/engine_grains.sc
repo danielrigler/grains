@@ -9,7 +9,7 @@ Engine_grains : CroneEngine {
     classvar <recDir = "/home/we/dust/audio/grains/";
     classvar <recMinDur = 0.1;
 
-    var <buffers, <bufR, <silent, <voices, pg, pgv, dg;
+    var <buffers, <bufR, <silent, nullBuf, <voices, pg, pgv, dg;
     var dying, dyingUntil;
     var stateBus, reporter, reportRate, oState, nornsAddr;
     var curStride, reportSlots, trashIndex, curReportK = -1;
@@ -444,6 +444,7 @@ Engine_grains : CroneEngine {
         var put = { arg k, v; a = a.add(k); a = a.add(v) };
         put.(\bus, voiceBus[i].index);
         put.(\buf, this.bufFor(i, ly));
+        put.(\i_nb, nullBuf.bufnum);
         vparams[i].keysValuesDo({ arg k, v;
             if(filtSet.includes(k).not, { put.(k, v) });
         });
@@ -603,7 +604,7 @@ Engine_grains : CroneEngine {
         buffers[src] = silent;
         bufR[src] = silent;
         nls[src] = 1;
-        vparams[src] = Dictionary.new;
+        vparams[src] = IdentityDictionary.new;
         actives[src] = false;
         this.stopVoice(src);
         this.clearState(src);
@@ -639,6 +640,8 @@ Engine_grains : CroneEngine {
         filtKeys = [\cutoff, \res, \hpf, \vamp, \vampLag, \ngain];
         filtSet = IdentitySet.newFrom(filtKeys);
         silent = Buffer.alloc(context.server, context.server.sampleRate.asInteger, 1);
+        nullBuf = Buffer.new(context.server, 0, 1);
+        context.server.sendMsg(\b_free, nullBuf.bufnum);
         buffers = Array.fill(nv, { silent });
         bufR = Array.fill(nv, { silent });
         geos = Array.newClear(nv);
@@ -646,7 +649,7 @@ Engine_grains : CroneEngine {
         voices = Array.fill(nv, { Array.fill(nlMax, { nil }) });
         dying = Array.fill(nv, { Array.fill(nlMax, { nil }) });
         dyingUntil = Array.fill(nv, { Array.fill(nlMax, { 0 }) });
-        vparams = Array.fill(nv, { Dictionary.new });
+        vparams = Array.fill(nv, { IdentityDictionary.new });
         nls = Array.fill(nv, { 1 });
         actives = Array.fill(nv, { false });
         wins = Array.fill(nv * nlMax * 2, { arg k; (k % 2) });
@@ -684,20 +687,19 @@ Engine_grains : CroneEngine {
             [\grainsloop, \grainsloopeco, \grainsloopbin, \grainsloopecobin, \grainslooplv, \grainsloopecolv, \grainsloopbinlv, \grainsloopecobinlv].do({ arg defName, n;
                 var eco = n % 2, bin = (n div: 2) % 2, lv = n div: 4;
                 keep.(SynthDef(defName, {
-                    arg bus, buf, statebus = 0, posStart = 0, posEnd = 48000, iw = 10, mrate = 1, prate = 1, gate = 1, rel = 1, rateSlew = 1.5, vrate = 1, weight1 = 14, weight2 = 8, weight3 = 3, weight4 = 6, weight5 = 4, lrate1 = 1, lrate2 = 0.5, lrate3 = 4, lrate4 = 2, lrate5 = 0.25, lamp1 = 1, lamp2 = 1.5849, lamp3 = 0.1259, lamp4 = 0.3981, lamp5 = 1.2589, revprob = 0.1, panwidth = 0.5, amul = 0.75, aadd = 1.25, kTune = 3, kDir = 6, kAmp = 4.5, kPan = 8, phAmp = 0, phPan = 0, lagAmp = 0.4, i_intro = 1, head = -1;
-                    var frames = BufFrames.ir(buf).max(4096), edge = (SampleRate.ir * 0.2).min(frames * 0.02).max((frames * 0.005).min(256)), iu = (frames - (edge * 2)).reciprocal;
+                    arg bus, buf, statebus = 0, posStart = 0, posEnd = 48000, iw = 10, mrate = 1, prate = 1, gate = 1, rel = 1, rateSlew = 1.5, weight1 = 14, weight2 = 8, weight3 = 3, weight4 = 6, weight5 = 4, lrate1 = 1, lrate2 = 0.5, lrate3 = 4, lrate4 = 2, lrate5 = 0.25, lamp1 = 1, lamp2 = 1.5849, lamp3 = 0.1259, lamp4 = 0.3981, lamp5 = 1.2589, revprob = 0.1, panwidth = 0.5, amul = 0.75, aadd = 1.25, kTune = 3, kDir = 6, kAmp = 4.5, kPan = 8, phAmp = 0, phPan = 0, lagAmp = 0.4, i_intro = 1, i_nb = 0, head = -1;
+                    var frames = BufFrames.ir(buf).max(4096), edge = (SampleRate.ir * 0.2).min(frames * 0.02).max((frames * 0.005).min(256)), iu = (frames - (edge * 2)).reciprocal, brs = BufRateScale.ir(buf);
                     var boot = Impulse.kr(0), idx = TWindex.kr(boot + Dust.kr(prate / kTune), [weight1, weight2, weight3, weight4, weight5], 1);
-                    var rate = Lag.kr(Select.kr(idx, [lrate1, lrate2, lrate3, lrate4, lrate5]) * (vrate * BufRateScale.ir(buf)) * (TRand.kr(0, 1, Impulse.kr(mrate / kDir)) >= revprob).madd(2, -1), rateSlew);
-                    var t = LocalIn.kr(1), sw = ToggleFF.kr(t), nsw = 1 - sw, resetTo = Select.kr(rate > 0, [posEnd, posStart]), kinc = rate * (SampleRate.ir * ControlDur.ir);
-                    var pos = Phasor.kr(t, kinc, 0, frames, resetTo), sl = (rate.abs * iw).clip(33.333333, 333.33333), xfr = Slew.kr(sw, sl, sl), s1, s2, sg;
-                    LocalOut.kr(BinaryOpUGen('==', xfr, sw) > InRange.kr(pos, posStart, posEnd));
-                    if(eco > 0, {
-                        s1 = BufRd.ar(1, buf, Phasor.ar(nsw, rate, 0, frames, resetTo), 1, 2);
-                        s2 = BufRd.ar(1, buf, Phasor.ar(sw, rate, 0, frames, resetTo), 1, 2);
-                    }, {
-                        s1 = PlayBuf.ar(1, buf, rate, nsw, resetTo, 1);
-                        s2 = PlayBuf.ar(1, buf, rate, sw, resetTo, 1);
-                    });
+                    var rate = Lag.kr(Select.kr(idx, [lrate1, lrate2, lrate3, lrate4, lrate5]) * (TRand.kr(0, 1, Impulse.kr(mrate / kDir)) >= revprob).madd(brs * 2, brs.neg), rateSlew);
+                    var fb = LocalIn.kr(4, [0, 0, 1, 1]), sw = ToggleFF.kr(fb[0]), nsw = 1 - sw, resetTo = Select.kr(rate > 0, [posEnd, posStart]), kinc = rate * (SampleRate.ir * ControlDur.ir);
+                    var pos = Phasor.kr(fb[0], kinc, 0, frames, resetTo), sl = (rate.abs * iw).clip(33.333333, 333.33333), xfr = Slew.kr(sw, sl, sl), xs = xfr + fb[1], on1 = xs < 2, on2 = xs > 0, s1, s2, sg;
+                    var read = { arg trig, on, was;
+                        var b = Select.kr(on + was, [i_nb, buf, buf]), r = Select.kr(on, [1e9, rate]);
+                        if(eco > 0, { BufRd.ar(1, b, Phasor.ar(trig, r, 0, Select.kr(on, [1e12, frames]), resetTo), on, 2) }, { PlayBuf.ar(1, b, r, trig, resetTo, on) })
+                    };
+                    LocalOut.kr([BinaryOpUGen('==', xfr, sw) > InRange.kr(pos, posStart, posEnd), xfr, on1, on2]);
+                    s1 = read.(nsw, on1, fb[2]);
+                    s2 = read.(sw, on2, fb[3]);
                     if(lv > 0, {
                         sg = { arg q; Lag.kr(((q - head).wrap(frames * -0.5, frames * 0.5).abs / (SampleRate.ir * 0.01 * (rate.abs + 1)) - 0.2).clip(0, 1), 0.003) };
                         s1 = s1 * sg.(Phasor.kr(nsw, kinc, 0, frames, resetTo));
@@ -1227,6 +1229,7 @@ Engine_grains : CroneEngine {
         (buffers ++ bufR).asSet.do({ arg b; if(b.notNil and: { b !== silent }, { b.free }) });
         [wobbleBuffer, glitchBuffer, spiralBuffer, bufSine].do({ arg b; if(b.notNil, { b.free }) });
         if(silent.notNil, { silent.free });
+        if(nullBuf.notNil, { nullBuf.free });
         if(voiceBus.notNil, { voiceBus.do({ arg b; if(b.notNil, { b.free }) }) });
         [stateBus, busMain, busDly].do({ arg b; if(b.notNil, { b.free }) });
         if(heads.notNil, { heads.do({ arg b; b.free }) });

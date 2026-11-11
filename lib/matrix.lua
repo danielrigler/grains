@@ -31,7 +31,7 @@ for nl = 1, LMAX do
   FULL[nl] = ramp(nl, FAINT, WALL, 1)
 end
 
-local s_level, s_rect, s_fill, s_img, s_draw
+local s_level, s_rect, s_fill, s_img, s_draw, s_clear
 local IMG, DOT, ICON, icon_ver, icon_x = false, {}, nil, -1, 0
 local Q, QN = {}, {}
 for l = 1, 15 do Q[l], QN[l] = {}, 0 end
@@ -57,7 +57,7 @@ local function flush()
 end
 
 function M.bind()
-  s_level, s_rect, s_fill = screen.level, screen.rect, screen.fill
+  s_level, s_rect, s_fill, s_clear = screen.level, screen.rect, screen.fill, screen.clear
   s_img, s_draw = screen.display_image_region, screen.draw_to
   IMG = pcall(function()
     for _, l in ipairs({WALL, 7}) do
@@ -98,11 +98,12 @@ local function wave(raw)
 end
 
 local function wimg(v, l)
-  local im = v.img[l]
-  if im then return im end
-  im = screen.create_image(CW, IH)
-  local w = v.wf
+  local im, ver = v.img[l], v.iver
+  if ver[l] == v.wver then return im end
+  local w, old = v.wf, im
+  im = im or screen.create_image(CW, IH)
   s_draw(im, function()
+    if old then s_clear() end
     s_level(l)
     local c = 0
     while c < CW do
@@ -113,7 +114,7 @@ local function wimg(v, l)
     end
     s_fill()
   end)
-  v.img[l] = im
+  v.img[l], ver[l] = im, v.wver
   return im
 end
 
@@ -250,7 +251,10 @@ function M.draw(V, sel, blink)
   for i = 1, NCELL do
     local v = V[i]
     if v.raw then
-      if v.wgen ~= GEN then v.wgen, v.wf, v.img = GEN, wave(v.raw), {} end
+      if v.wgen ~= GEN then
+        if v.igen ~= GEN then v.igen, v.img, v.iver = GEN, {}, {} end
+        v.wgen, v.wf, v.wver = GEN, wave(v.raw), (v.wver or 0) + 1
+      end
       local nl = v.on and min(v.nl, LMAX) or 0
       local lv = max(nl, 1)
       prep(v, i, nl, full and FULL[lv] or sel == i and SEL[lv] or DIM[lv])
@@ -280,8 +284,10 @@ function M.icons(F)
   if icon_ver ~= F.ver then
     icon_ver, icon_x = F.ver, 128
     for k = 2, F.n, 4 do icon_x = min(icon_x, r[k]) end
-    ICON = screen.create_image(128, 3)
+    local old = ICON
+    ICON = ICON or screen.create_image(128, 3)
     s_draw(ICON, function()
+      if old then s_clear() end
       for l = 1, 15 do
         local any = false
         for k = 1, F.n, 4 do
