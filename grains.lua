@@ -1,7 +1,7 @@
 --
 --
 --
---          grains v0.25 
+--          grains v0.26
 --           @dddstudio
 --
 --
@@ -107,8 +107,8 @@ local sys = {}
 local LIVE, LIVE_F, CAP_F = {t = 0}, "live", "capture"
 
 local SEEDF = {"tune", "mr", "cut", "lvl", "floor"}
-local LR, MD, THR = {}, {}, {}
-for k = 1, 5 do LR[k], MD[k] = "lrate" .. k, "mididiff" .. k end
+local LR, MD, PQ, THR = {}, {}, {}, {}
+for k = 1, 5 do LR[k], MD[k], PQ[k] = "lrate" .. k, "mididiff" .. k, "pq" .. k end
 for i = 1, NV do
   THR[i] = {}
   for k = 1, 5 do THR[i][k] = (k * 0.6 + (i - 1) * 0.618034 % 1 * 0.2) % 1 end
@@ -134,8 +134,8 @@ local LAYER_TRIM = {}
 for n = 1, NL do LAYER_TRIM[n] = -10 * math.log(n, 10) end
 
 local function new_voice()
-  local v = {at = 0, tries = 0, nl = 0, act = 0, b0 = 0, b1 = 1, lo = 0, hi = 1, rg = 1,
-    pos = {}, ls = {}, le = {}, ts = {}, te = {}, lw = {}, lc = {}, pc = {}, sent = {}, seed = {}, seedT = {},
+  local v = {at = 0, tries = 0, nl = 0, act = 0, b0 = 0, b1 = 1, lo = 0, hi = 1, rg = 1, pb = 0, pd = 0, pst = 0, pitchf = 0,
+    dg = {0, 0, 0, 0, 0}, pos = {}, ls = {}, le = {}, ts = {}, te = {}, lw = {}, lc = {}, pc = {}, sent = {}, seed = {}, seedT = {},
     pit = Pit.new((lcap > 0 and lcap or LCAPS[1]) * 2)}
   for L = 1, NL do v.pos[L], v.ls[L], v.le[L], v.ts[L], v.te[L] = 0, 0, 1, 0, 1 end
   for _, f in ipairs(SEEDF) do
@@ -268,6 +268,42 @@ local function push_vol()
 end
 Sync.vpush = push_vol
 
+local function pq_push(i)
+  local v = V[i]
+  local d, dg, sc = v.pd, v.dg, v.psc
+  for k = 1, 5 do vsend(i, PQ[k], d == 0 and 1 or ratio(clamp(Scale.pitch(dg[k] + d, sc) - Scale.pitch(dg[k], sc), -24, 24))) end
+end
+
+local function pitch_show(v, st)
+  local pf, P = clamp((v.pb + st) / Shuffle.PITCH_HI, -1, 1), matrix.PHALF
+  if floor(pf * P + 0.5) ~= floor(v.pitchf * P + 0.5) then dirty = true end
+  v.pst, v.pitchf = st, pf
+end
+
+local function push_pitch()
+  if Sync.plagdirty then
+    Sync.plagdirty = false
+    local lag = Sync.plag()
+    for i = 1, NV do vsend(i, "plag", lag) end
+  end
+  local sm = Sync.psm
+  for i = 1, nva do
+    local v = V[i]
+    if v.on and not v.frz then
+      local x = Sync.pval(i, nva)
+      if sm then
+        vsend(i, "pm", ratio(x), 5e-5)
+        pitch_show(v, x)
+      elseif x ~= v.pd then
+        v.pd = x
+        pq_push(i)
+        pitch_show(v, Scale.pitch(v.dg[1] + x, v.psc) - Scale.pitch(v.dg[1], v.psc))
+      end
+    end
+  end
+end
+Sync.ppush = push_pitch
+
 local function lad(t, tun, fifth, thr)
   local n, q = abs(t), t < 0 and 5 or 7
   local x = n * pamt
@@ -292,12 +328,21 @@ local function push_per_voice()
     local ivol, itune = pid.volp:get(), pid.tunep:get()
     v.volb = clamp((ivol - DB_FLOOR) / vrange, 0, 1)
     if not Sync.von or not v.volf then v.volf = v.volb end
-    v.pitchf = clamp(itune * pamt / Shuffle.PITCH_HI, -1, 1)
+    v.pb = itune * pamt
     local var, sc = ov(h, "variance") * 0.01, ov(h, "scale")
     local fifth = Scale.fifth(sc)
     local deg = Scale.round(s.tune * ov(h, "spread") * 0.02 * Scale.size(sc)) + Scale.near(itune, sc)
-    local tun, th = ov(h, "tuning"), THR[i]
-    for k = 1, 5 do vsend(i, LR[k], ratio(lad(tun + Scale.pitch(deg + Scale.round(Scale.steps(ov(h, MD[k]), sc) * lsp), sc), tun, fifth, th[k]))) end
+    local tun, th, dg = ov(h, "tuning"), THR[i], v.dg
+    for k = 1, 5 do
+      dg[k] = deg + Scale.round(Scale.steps(ov(h, MD[k]), sc) * lsp)
+      vsend(i, LR[k], ratio(lad(tun + Scale.pitch(dg[k], sc), tun, fifth, th[k])))
+    end
+    v.psc = sc
+    if v.pd ~= 0 then
+      pq_push(i)
+      v.pst = Scale.pitch(dg[1] + v.pd, sc) - Scale.pitch(dg[1], sc)
+    end
+    v.pitchf = clamp((v.pb + v.pst) / Shuffle.PITCH_HI, -1, 1)
     local emod, mr, pr, cut = 2 ^ (s.mr * var * 1.3), ov(h, "motionrate"), ov(h, "pitchrate"), ov(h, "cutoff")
     v.mr = (frz or mr <= RATE_OFF) and 0 or clamp(mr * emod, 0.02, 12)
     vsend(i, "mrate", v.mr)
@@ -1504,6 +1549,17 @@ local function setup_params()
     if not Sync.von then voices_dirty = true end
   end
   local function rlfo_vis() Sync.rset() Sync.vis() end
+  local function plfo_apply()
+    Sync.pset()
+    local on, sm = Sync.pon, Sync.psm
+    for i = 1, NV do
+      local v = V[i]
+      if not on or not sm then vsend(i, "pm", 1) end
+      if not on or sm then v.pd = 0 pq_push(i) end
+      if not on and v.pst ~= 0 then v.pst, v.pitchf, dirty = 0, clamp(v.pb / Shuffle.PITCH_HI, -1, 1), true end
+    end
+  end
+  local function plfo_vis() plfo_apply() Sync.vis() end
   local function series_str(p)
     local v = p:get()
     return v <= 0 and "parallel" or v >= 100 and "series" or string.format("%d%%", floor(v + 0.5))
@@ -1560,7 +1616,7 @@ local function setup_params()
   flag("freeze_all", "Freeze All", freeze_refresh)
   opt("quality", "Interpolation", {"cubic", "linear (eco)"}, 1, OPT)
 
-  group("lfo", "LFO", 14)
+  group("lfo", "LFO", 23)
   opt("vlfo", "Volume LFO", OFFON, 1, function(v)
     Sync.venable(v == 2)
     Shuffle.vol.step = Sync.von and 0.5 or 1
@@ -1581,6 +1637,19 @@ local function setup_params()
   ctl("rlfo_freq", "Free Cycle", 0.01, 4, "exp", 0, 0.05, "Hz", Sync.rset)
   opt("rlfo_sync", "Time Base", TB, 1, rlfo_vis)
   num("rlfo_div", "Division", 1, Sync.NDIV, 16, Sync.rfmt, Sync.rset)
+  opt("plfo", "Pitch LFO", OFFON, 1, plfo_vis)
+  opt("plfo_mode", "Mode", {"smooth", "scale"}, 1, plfo_vis)
+  opt("plfo_shape", "Shape", Sync.SHAPES, 1, plfo_apply)
+  ctl("plfo_depth", "Depth", 0.01, 12, "exp", 0, 0.3, "st", plfo_apply)
+  str("plfo_depth", function(p)
+    local v = p:get()
+    return v < 1 and string.format("%d ct", floor(v * 100 + 0.5)) or string.format("%.2f st", v)
+  end)
+  num("plfo_steps", "Steps", 1, 7, 2, nil, plfo_apply)
+  ctl("plfo_spread", "Spread", 0, 100, "lin", 1, 0, "%", plfo_apply)
+  ctl("plfo_freq", "Free Cycle", 0.02, 10, "exp", 0, 0.5, "Hz", plfo_apply)
+  opt("plfo_sync", "Time Base", TB, 1, plfo_vis)
+  num("plfo_div", "Division", 1, Sync.NDIV, Sync.DIV_BAR, Sync.pfmt, plfo_apply)
 
   group("tune", "TUNING", 15)
   for i, d in ipairs({{14, 0, 0}, {8, -12, 4}, {3, 24, -18}, {6, 12, -8}, {4, -24, 2}}) do
@@ -2084,8 +2153,8 @@ end
 
 local MORPH_SKIP = {morph = true, source = true, src_norm = true, rev_freeze = true, chunk = true, lseed = true, level = true, quality = true, rev_type = true, d_series = true, binaural = true}
 local function morph_skip(id)
-  return MORPH_SKIP[id] or id:find("^morph") or id:find("^vlfo") or id:find("^do_") or id:find("^lock_")
-    or id:find("^freeze") or id:find("^rec_") or id:find("^bounce_") or id:find("^rlfo")
+  return MORPH_SKIP[id] or id:find("^morph") or id:find("^[vrp]lfo") or id:find("^do_") or id:find("^lock_")
+    or id:find("^freeze") or id:find("^rec_") or id:find("^bounce_")
 end
 
 local CFG = {path = norns.state.data .. "settings",
@@ -2116,6 +2185,7 @@ local function frame()
   if next(fpend) then src_flush() end
   sys.n = sys.n + 1
   if sys.n == FPS * 10 and params:get("auto_update") == 2 then installer:check() end
+  Sync.ptick(now)
   if sys.n % 2 == 0 then
     Sync.tick(now)
     physics_tick(now, sys.n % 4 == 0)
@@ -2184,7 +2254,7 @@ function init()
   reroll_seeds(true)
   setup_params()
   setup_osc()
-  Sync.set_rate(CTRL_HZ)
+  Sync.set_rate(CTRL_HZ, FPS)
   Keys.init{combos = COMBOS, longpress = 1, coarse = {density = 5, layers = 5, voices = 5, scale = 4}}
   params:set("lseed", random(9999))
   params:set("morph_seed", random(9999))

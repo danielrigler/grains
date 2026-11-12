@@ -82,7 +82,7 @@ function M.set_count(n)
   ROWS, WDY = BOT + 1, floor(BOT / 2)
   WH, PHALF = WDY - 1, min(WDY, BOT - WDY)
   IH = WH * 2 + 1
-  M.CW, M.CH, M.WALL_ROWS = CW, CH, ROWS
+  M.CW, M.CH, M.WALL_ROWS, M.PHALF = CW, CH, ROWS, PHALF
   return true
 end
 

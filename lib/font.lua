@@ -13,7 +13,7 @@ local GLYPH = {
 local IDS = {"reverb_mix", "d_mix", "sh_mix", "sh_mod", "bc_mix", "bc_mod", "wf_mix", "reso_mix", "gl_ratio", "gl_mix",
   "tape_mix", "shaper_mix", "wobble_mix", "reel_mix", "genloss_mix", "ringmod_mix", "spiral_mix", "sub_mix", "ott_mix",
   "stchorus_mix", "m_width", "dimension_mix", "vibe_mix", "haas", "binaural", "rspeed", "eq_low", "eq_mid", "eq_high",
-  "tilt", "cutoff", "vhpf", "d_sync", "morph_auto", "morph_sync", "vlfo", "vlfo_sync", "rev_freeze"}
+  "tilt", "cutoff", "vhpf", "d_sync", "morph_auto", "morph_sync", "vlfo", "vlfo_sync", "plfo", "plfo_sync", "rev_freeze"}
 
 local fx, objs = {}, {}
 local function poll() for i, id in ipairs(IDS) do fx[id] = objs[i]:get() end end
@@ -38,7 +38,7 @@ local LPF, HPF = 1 / log(1000), 1 / log(40)
 local function eqdev(c) return max(max(abs(c.eq_low), abs(c.eq_mid), abs(c.eq_high)) / 20, abs(c.tilt)) end
 local function mix(id) return {function(c) return c[id] > 0 end, function(c) return c[id] end} end
 local function clock_on(c)
-  return (c.d_sync == 2 and c.d_mix > 0) or (c.morph_auto == 2 and c.morph_sync == 2) or (c.vlfo == 2 and c.vlfo_sync == 2)
+  return (c.d_sync == 2 and c.d_mix > 0) or (c.morph_auto == 2 and c.morph_sync == 2) or (c.vlfo == 2 and c.vlfo_sync == 2) or (c.plfo == 2 and c.plfo_sync == 2)
 end
 
 local SPECS = {

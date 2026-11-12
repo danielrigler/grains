@@ -33,7 +33,7 @@ local function fmt(id, sf)
     return label(pv(id)) .. "  " .. (t < 60 and string.format(sf, t) or string.format("%.1f min", t / 60))
   end
 end
-S.mo_fmt, S.vfmt, S.rfmt = fmt("morph_div", "%.1f s"), fmt("vlfo_div", "%.2f s"), fmt("rlfo_div", "%.2f s")
+S.mo_fmt, S.vfmt, S.rfmt, S.pfmt = fmt("morph_div", "%.1f s"), fmt("vlfo_div", "%.2f s"), fmt("rlfo_div", "%.2f s"), fmt("plfo_div", "%.2f s")
 
 local dly_sent, dly_on = nil, false
 function S.dly_synced() return pv("d_sync") == 2 end
@@ -97,9 +97,9 @@ local function shape(sh, k, ph, sd, s)
   return rnd(k, sd)
 end
 
-local CHZ, EVERY, VSHOW = 30, 2, 2
-function S.set_rate(hz)
-  CHZ = hz
+local CHZ, EVERY, VSHOW, FHZ = 30, 2, 2, 60
+function S.set_rate(hz, fhz)
+  CHZ, FHZ = hz, fhz or hz * 2
   EVERY = max(floor(hz / 15 + 0.5), 1)
   VSHOW = EVERY
 end
@@ -252,12 +252,57 @@ function S.region(i, a, b, n)
   return a, a + w
 end
 
+S.pon, S.psm, S.plagdirty = false, true, false
+local pshape, pdepth, psteps, pspread, pfreq, phz, psync, pbeats = 1, 0, 1, 0, 0.5, 0.5, false, 4
+local ppos, pcyc, pframe, pdiv, plast = 0, 0, 0, 2, nil
+
+local function prate()
+  local f = pfreq
+  if psync then
+    local t = pbeats * beat_sec()
+    if t > 0.001 then f = 1 / t end
+  end
+  phz = f
+  pdiv = S.psm and min(max(floor(FHZ / max(f * 32, 6)), 2), 10) or 1
+  S.plagdirty = true
+end
+
+function S.pset()
+  S.pon, S.psm, pshape = pv("plfo") == 2, pv("plfo_mode") == 1, pv("plfo_shape")
+  pdepth, psteps, pspread = pv("plfo_depth"), pv("plfo_steps"), pv("plfo_spread") * 0.01
+  pfreq, psync, pbeats = pv("plfo_freq"), pv("plfo_sync") == 2, beats(pv("plfo_div"))
+  prate()
+end
+
+function S.plag() return S.psm and pdiv / FHZ or 0.03 end
+
+function S.pval(i, n)
+  local ph = ppos + pspread * (i - 1) / n
+  local w = floor(ph)
+  local u = shape(pshape, pcyc + w, ph - w, pspread > 0 and i * 104729 or 104729, 30 + i)
+  if S.psm then return (u * 2 - 1) * pdepth end
+  return min(floor(u * (psteps * 2 + 1)), psteps * 2) - psteps
+end
+
+function S.ptick(now)
+  if not S.pon then plast = nil return end
+  local dt = plast and now - plast or 0
+  plast = now
+  if dt < 0 or dt > 0.5 then dt = 1 / FHZ end
+  ppos, pcyc = advance(ppos, pcyc, dt, phz, psync, pbeats)
+  pframe = pframe + 1
+  if pframe >= pdiv then
+    pframe = 0
+    if S.ppush then S.ppush() end
+  end
+end
+
 local function vis(on, ...)
   for _, id in ipairs({...}) do if on then params:show(id) else params:hide(id) end end
 end
 
 function S.vis()
-  local pl, d, on, v, r = pv("rev_type") == 1, S.dly_synced(), S.mo_on(), S.von, S.ron
+  local pl, d, on, v, r, p = pv("rev_type") == 1, S.dly_synced(), S.mo_on(), S.von, S.ron, S.pon
   local m = on and S.mo_synced()
   vis(pl, "rev_freeze", "rev_series", "d_series", "rev_decay", "rev_damp", "rev_pre", "rev_mdepth", "rev_mrate")
   vis(d, "d_div") vis(not d, "d_time")
@@ -265,6 +310,8 @@ function S.vis()
   vis(m, "morph_div") vis(on and not m, "morph_rate")
   vis(v, "vlfo_shape", "vlfo_depth", "vlfo_sync") vis(v and vsync, "vlfo_div") vis(v and not vsync, "vlfo_freq")
   vis(r, "rlfo_mode", "rlfo_shape", "rlfo_depth", "rlfo_spread", "rlfo_sync") vis(r and rsync, "rlfo_div") vis(r and not rsync, "rlfo_freq")
+  vis(p, "plfo_mode", "plfo_shape", "plfo_spread", "plfo_sync") vis(p and S.psm, "plfo_depth") vis(p and not S.psm, "plfo_steps")
+  vis(p and psync, "plfo_div") vis(p and not psync, "plfo_freq")
   if _menu and type(_menu.rebuild_params) == "function" then _menu.rebuild_params() end
 end
 
@@ -274,13 +321,14 @@ function S.tick(now)
   local dt = last_t and now - last_t or 0
   last_t = now
   if dt < 0 or dt > 0.5 then dt = 1 / CHZ end
-  local vclk = S.von and vsync
-  if dly_on or vclk then
+  local vclk, pclk = S.von and vsync, S.pon and psync
+  if dly_on or vclk or pclk then
     local bs = beat_sec()
     if bs ~= last_bs then
       last_bs = bs
       if dly_on then S.dly_refresh() end
       if vclk then vrate() end
+      if pclk then prate() end
     end
   end
   mo_tick(dt)
