@@ -7,13 +7,14 @@ local GLYPH = {
   O = {"111", "101", "111"}, W = {"101", "111", "111"}, M = {"101", "010", "101"}, U = {"101", "101", "111"},
   c = {"11", "10", "11"}, S = {"011", "010", "110"}, G = {"110", "101", "111"}, T = {"111", "010", "010"},
   X = {"011101", "010111", "110101"}, D = {"110", "101", "110"}, R = {"111", "110", "101"},
-  Z = {"01111", "01010", "11010"}, C = {"111", "100", "111"}
+  Z = {"01111", "01010", "11010"}, C = {"111", "100", "111"}, L = {"100", "100", "111"}
 }
 
 local IDS = {"reverb_mix", "d_mix", "sh_mix", "sh_mod", "bc_mix", "bc_mod", "wf_mix", "reso_mix", "gl_ratio", "gl_mix",
   "tape_mix", "shaper_mix", "wobble_mix", "reel_mix", "genloss_mix", "ringmod_mix", "spiral_mix", "sub_mix", "ott_mix",
   "stchorus_mix", "m_width", "dimension_mix", "vibe_mix", "haas", "binaural", "rspeed", "eq_low", "eq_mid", "eq_high",
-  "tilt", "cutoff", "vhpf", "d_sync", "morph_auto", "morph_sync", "vlfo", "vlfo_sync", "plfo", "plfo_sync", "rev_freeze"}
+  "tilt", "cutoff", "vhpf", "d_sync", "morph_auto", "morph_sync", "vlfo", "vlfo_sync", "plfo", "plfo_sync", "rev_freeze",
+  "rlfo", "rlfo_sync", "vlfo_depth", "rlfo_depth", "plfo_depth", "plfo_mode", "plfo_steps"}
 
 local fx, objs = {}, {}
 local function poll() for i, id in ipairs(IDS) do fx[id] = objs[i]:get() end end
@@ -39,10 +40,16 @@ local function eqdev(c) return max(max(abs(c.eq_low), abs(c.eq_mid), abs(c.eq_hi
 local function mix(id) return {function(c) return c[id] > 0 end, function(c) return c[id] end} end
 local function clock_on(c)
   return (c.d_sync == 2 and c.d_mix > 0) or (c.morph_auto == 2 and c.morph_sync == 2) or (c.vlfo == 2 and c.vlfo_sync == 2) or (c.plfo == 2 and c.plfo_sync == 2)
+    or (c.rlfo == 2 and c.rlfo_sync == 2)
 end
+local PLF = 1 / log(1200)
+local function vd(c) return c.vlfo == 2 and c.vlfo_depth / 36 or 0 end
+local function rd(c) return c.rlfo == 2 and c.rlfo_depth * 0.01 or 0 end
+local function pd(c) return c.plfo == 2 and (c.plfo_mode == 1 and log(c.plfo_depth * 100) * PLF or c.plfo_steps / 7) or 0 end
 
 local SPECS = {
   {"K", nil, clock_on},
+  {"L", nil, function(c) return vd(c) > 0 or rd(c) > 0 or c.plfo == 2 end, function(c) return max(vd(c), rd(c), pd(c)) * 100 end},
   {"F", "grains_tone", function(c) return c.cutoff < 19999 or c.vhpf > 20.1 end,
     function(c) return max(1 - log(math.min(max(c.cutoff, 20), 20000) / 20) * LPF, log(math.min(max(c.vhpf, 20), 800) / 20) * HPF) * 100 end},
   {"E", "grains_eq", function(c) return eqdev(c) > 0.01 end, function(c) return eqdev(c) * 100 end},

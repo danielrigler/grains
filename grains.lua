@@ -1164,6 +1164,7 @@ local function dice()
     ovr_capture()
     dicing = true
     for _, d in ipairs(DICE) do if rolls(d[1]) and not (d[1] == "tune" and orig) then d[2]() end end
+    if not fxlocked("lfo") then Dice.lfo_roll(params, orig and "plfo") end
     if rolls("voice") then
       for i = 1, NV do
         if not V[i].lck then
@@ -1538,7 +1539,7 @@ local function setup_params()
   local function trig(id, name, f) params:add_binary(id, name, "trigger", 0) act(id, function(v) if v == 1 then f() end end) end
   local function flag(id, name, a) params:add_binary(id, name, "toggle", 0) act(id, a) end
   local function str(id, f) params:lookup_param(id).string = f end
-  local function fxlock(g) params:add_binary("fxlock_" .. g, "Lock", "toggle", 0) end
+  local function fxlock(g, d) params:add_binary("fxlock_" .. g, "Lock", "toggle", d or 0) end
   local function group(id, name, n) params:add_group("grains_" .. id, name, n) end
   local OFFON, TB, NORM = {"OFF", "ON"}, {"free", "clock"}, {"OFF", "-6 dB"}
   local HIDDEN = {"grains_tune", "level", "lseed", "morph_seed", "grains_hold"}
@@ -1616,7 +1617,7 @@ local function setup_params()
   flag("freeze_all", "Freeze All", freeze_refresh)
   opt("quality", "Interpolation", {"cubic", "linear (eco)"}, 1, OPT)
 
-  group("lfo", "LFO", 23)
+  group("lfo", "LFO", 24)
   opt("vlfo", "Volume LFO", OFFON, 1, function(v)
     Sync.venable(v == 2)
     Shuffle.vol.step = Sync.von and 0.5 or 1
@@ -1650,6 +1651,7 @@ local function setup_params()
   ctl("plfo_freq", "Free Cycle", 0.02, 10, "exp", 0, 0.5, "Hz", plfo_apply)
   opt("plfo_sync", "Time Base", TB, 1, plfo_vis)
   num("plfo_div", "Division", 1, Sync.NDIV, Sync.DIV_BAR, Sync.pfmt, plfo_apply)
+  fxlock("lfo", 1)
 
   group("tune", "TUNING", 15)
   for i, d in ipairs({{14, 0, 0}, {8, -12, 4}, {3, 24, -18}, {6, 12, -8}, {4, -24, 2}}) do

@@ -175,4 +175,30 @@ function D.fx_settings(set, locked)
   end
 end
 
+local SHP, PSHP = {1, 1, 2, 2, 3, 4, 5, 6, 6, 7, 7, 8}, {1, 2, 6, 6, 7, 7}
+D.LFO = {
+  {"vlfo", 15, {{"vlfo_shape", pick = SHP}, {"vlfo_depth", 6, 20}},
+    {"vlfo_div", pick = {12, 14, 16, 18}}, {"vlfo_freq", 0.05, 1, exp = true}},
+  {"rlfo", 15, {{"rlfo_mode", 1, 3, int = true}, {"rlfo_shape", pick = SHP}, {"rlfo_depth", 15, 70}, {"rlfo_spread", 0, 100}},
+    {"rlfo_div", pick = {16, 18, 20, 22}}, {"rlfo_freq", 0.02, 0.25, exp = true}},
+  {"plfo", 10, {{"plfo_mode", pick = {1, 1, 1, 2}}, {"plfo_shape", pick = PSHP}, {"plfo_depth", 0.05, 0.35, exp = true},
+    {"plfo_steps", 1, 2, int = true}, {"plfo_spread", 0, 100}},
+    {"plfo_div", pick = {9, 12, 14, 16}}, {"plfo_freq", 0.1, 1, exp = true}}
+}
+
+function D.lfo_roll(P, skip)
+  for _, l in ipairs(D.LFO) do
+    local id = l[1]
+    if id ~= skip then
+      local on = chance(l[2])
+      if on then
+        for _, s in ipairs(l[3]) do P:set(s[1], value(s)) end
+        local s = P:get(id .. "_sync") == 2 and l[4] or l[5]
+        P:set(s[1], value(s))
+      end
+      P:set(id, on and 2 or 1)
+    end
+  end
+end
+
 return D
