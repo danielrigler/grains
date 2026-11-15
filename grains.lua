@@ -1,7 +1,7 @@
 --
 --
 --
---          grains v0.27
+--          grains v0.28
 --           @dddstudio
 --
 --
@@ -1728,6 +1728,14 @@ local function setup_params()
   pct("sh_fb", "Feedback", 20)
   fxlock("shimmer")
 
+  group("prism", "PRISM", 6)
+  pct("prism_mix", "Mix", 0)
+  pct("prism_bright", "Brightness", 50)
+  pct("prism_strike", "Strike", 50)
+  ctl("prism_ring", "Ring", 0.05, 4, "exp", 0, 1, "s", true)
+  ctl("prism_band", "Colour", 300, 2500, "exp", 1, 1500, "Hz", true)
+  fxlock("prism")
+
   group("tape", "TAPE", 11)
   opt("tape_mix", "Tape Sim", OFFON, 1, OPT)
   pct("reel_mix", "Saturation", 0)
@@ -1835,7 +1843,7 @@ local function setup_params()
   pct("gl_decay", "Decay", 0)
   fxlock("glitch")
   FXM.build(#params.params)
-  for _, id in ipairs({"d_mix", "halo_mix", "sh_mix", "reel_mix", "shaper_mix", "wobble_mix", "genloss_mix", "dimension_mix",
+  for _, id in ipairs({"d_mix", "halo_mix", "prism_mix", "sh_mix", "reel_mix", "shaper_mix", "wobble_mix", "genloss_mix", "dimension_mix",
     "stchorus_mix", "vibe_mix", "bc_mix", "wf_mix", "reso_mix", "ringmod_mix", "spiral_mix", "sub_mix", "ott_mix", "gl_ratio", "gl_mix"}) do
     local p = params:lookup_param(id)
     local s = p.string

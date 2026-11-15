@@ -57,7 +57,7 @@ D.SHAPE = {
 
 D.FX_MAX = 4
 D.FX = {
-  {"reverb_mix", "reverb", 45, -24, -6, -40}, {"d_mix", "delay", 40, 10, 45, 0}, {"halo_mix", "halo", 15, 30, 60, 0}, {"sh_mix", "shimmer", 20, 10, 40, 0},
+  {"reverb_mix", "reverb", 45, -24, -6, -40}, {"d_mix", "delay", 40, 10, 45, 0}, {"halo_mix", "halo", 15, 30, 60, 0}, {"sh_mix", "shimmer", 20, 10, 40, 0}, {"prism_mix", "prism", 15, 25, 65, 0},
   {"tape_mix", "tape", 15, 2, nil, 1}, {"reel_mix", "tape", 15, 10, 60, 0}, {"wobble_mix", "tape", 15, 10, 50, 0},
   {"dimension_mix", "chorus", 15, 20, 70, 0}, {"stchorus_mix", "chorus", 12, 20, 70, 0}, {"vibe_mix", "chorus", 12, 20, 70, 0},
   {"spiral_mix", "spiral", 12, 15, 50, 0}, {"ott_mix", "ott", 12, 10, 50, 0}, {"reso_mix", "reso", 10, 10, 45, 0},
@@ -73,6 +73,7 @@ D.FX_SET = {
   halo = {{"halo_time", 0.3, 0.7, exp = true}, {"halo_fb", 25, 60}, {"halo_depth", 20, 70}, {"halo_rate", 0.15, 1.2, exp = true},
     {"halo_sat", 30, 85}, {"halo_tone", 2500, 6500, exp = true}, {"halo_lowcut", 20, 120}},
   shimmer = {{"sh_mod", chance = 30, on = 2, off = 1}},
+  prism = {{"prism_bright", 20, 90}, {"prism_strike", 0, 100}, {"prism_ring", 0.2, 2.5, exp = true}, {"prism_band", 600, 2200, exp = true}},
   tape = {{"wobble_amp", 5, 50}, {"wobble_rpm", 30, 60}, {"flutter_amp", 10, 60}, {"flutter_freq", 3, 12, exp = true},
     {"flutter_var", 0.5, 4, exp = true}},
   chorus = {{"vibe_drift", 20, 80}},

@@ -15,7 +15,7 @@ Engine_grains : CroneEngine {
     var curStride, reportSlots, trashIndex, curReportK = -1;
     var busMain, busDly, fxMain, fxDelay, fxShimmer, fxTilt, fxDimension;
     var fxEq, fxTape, fxShaper, fxWobble, fxBitcrush, fxWavefold;
-    var fxResonator, fxGlitch, fxHaas, fxRotate, fxRingmod, fxStChorus, fxVibe, fxSpiral, fxGenloss, fxSub, fxReel, fxOtt, fxVerb, fxLevel, fxHalo, spiralBuffer;
+    var fxResonator, fxGlitch, fxHaas, fxRotate, fxRingmod, fxStChorus, fxVibe, fxSpiral, fxGenloss, fxSub, fxReel, fxOtt, fxVerb, fxLevel, fxHalo, fxPrism, spiralBuffer;
     var voiceBus, vfilt, vfg, vfTok, filtKeys, filtSet, stateMsg, vfDef, vfOn, vfPend, loopDef = \grainsloop, lq = 0, lb = 0;
     var wobbleBuffer, glitchBuffer, bufSine;
     var eqLow = 0, eqMid = 0, eqHigh = 0, glRatio = 0, glMix = 1;
@@ -1000,6 +1000,20 @@ Engine_grains : CroneEngine {
                 ReplaceOut.ar(bus, input + (pit * actualMix));
             }));
 
+            keep.(SynthDef(\grainsprism, {
+                arg bus, mix = 0, bright = 0.5, strike = 0.5, ring = 1, band = 1500, flush = 0;
+                var x = In.ar(bus, 2), hb = HPF.ar(x, band), h = LPF.ar(LPF.ar(hb, band * 2), band * 2), dt = [0.0173, 0.0229, 0.0293, 0.0359];
+                var en = LagUD.kr(Amplitude.kr(h[0].abs.max(h[1].abs), 0.002, 0.05), 0.004, 0.4), eb = Amplitude.kr(hb[0].abs.max(hb[1].abs), 0.004, 0.4) * 0.5;
+                var tr = LagUD.kr(((en / Lag.kr(en, 0.15).max(0.0001)) - 1.15).clip(0, 2), 0.004, 0.15), w4 = bright.squared * 4.8, w3 = bright * 3.2;
+                var u = (h * en.max(eb).max(0.002).reciprocal).clip2(1), q = LocalIn.ar(4), a, z;
+                a = u * ((u * ((u * ((u * w4) + w3)) + (2 - (bright * 1.4) - w4))) - (w3 * 0.75));
+                a = AllpassN.ar(HPF.ar(a, band * 2.2) * (en * ((1 - strike) + (tr * strike * 1.5)) * (1 - flush)), 0.01, [0.0031, 0.0043], 0.03);
+                z = [q[0] + q[1] + q[2] + q[3], q[0] - q[1] + q[2] - q[3], q[0] + q[1] - q[2] - q[3], q[0] - q[1] - q[2] + q[3]] * 0.5;
+                z = OnePole.ar(DelayN.ar(z + [a[0], a[1], a[0].neg, a[1].neg], 0.04, dt - ControlDur.ir), 0.3) * (0.001 ** (dt / ring));
+                LocalOut.ar(z);
+                ReplaceOut.ar(bus, x + ((a + ([z[0] + z[2], z[1] + z[3]] * ((1 - (0.001 ** (0.052 / ring))) ** 0.25))) * (Lag.kr(mix, 0.05).squared * 4)));
+            }));
+
             keep.(SynthDef(\grainsdelay, {
                 arg bus, wbus, mix = 0.0, delay = 0.5, ratio = 1, fb_amt = 0.3, dhpf = 20, lpf = 20000, w_rate = 0.0, w_depth = 0.0, stereo = 0.2, duck_amt = 0.0, flush = 0;
                 var input, local, fb, delayed, wet, combinedMod, lfo2Rate, lfo3Rate;
@@ -1128,6 +1142,7 @@ Engine_grains : CroneEngine {
         fxGenloss = Synth.newPaused(\grainsgenloss, [\bus, busMain.index], context.xg, 'addToTail');
         fxSub = Synth.newPaused(\grainssub, [\bus, busMain.index], context.xg, 'addToTail');
         fxShimmer = Synth.newPaused(\grainsshimmer, [\bus, busMain.index, \mix, 0], context.xg, 'addToTail');
+        fxPrism = Synth.newPaused(\grainsprism, [\bus, busMain.index], context.xg, 'addToTail');
         fxRotate = Synth.newPaused(\grainsrotate, [\bus, busMain.index, \rspeed, 0], context.xg, 'addToTail');
         fxStChorus = Synth.newPaused(\grainsstchorus, [\bus, busMain.index], context.xg, 'addToTail');
         fxVibe = Synth.newPaused(\grainsvibe, [\bus, busMain.index], context.xg, 'addToTail');
@@ -1173,6 +1188,7 @@ Engine_grains : CroneEngine {
             [fxSpiral, \spiral_bpm, \bpm, \spiral_div, \div, \spiral_feedback, \feedback, \spiral_rise, \rise, \spiral_glide, \glide, \spiral_span, \span, \spiral_tone, \tone],
             [fxSub, \sub_detune, \detune],
             [fxVibe, \vibe_drift, \drift],
+            [fxPrism, \prism_bright, \bright, \prism_strike, \strike, \prism_ring, \ring, \prism_band, \band],
             [fxHalo, \halo_time, \time, \halo_fb, \fb, \halo_depth, \depth, \halo_rate, \rate, \halo_sat, \sat, \halo_tone, \tone, \halo_lowcut, \lowcut],
             [fxVerb, \rev_series, \ser, \rev_decay, \decay, \rev_damp, \damp, \rev_pre, \pre, \rev_mdepth, \mdepth, \rev_mrate, \mrate, \rev_freeze, \frz]
         ].do({ arg row; var syn = row[0]; row.drop(1).pairsDo({ arg cmd, key; this.addCommand(cmd, "f", { arg msg; syn.set(key, msg[1]) }) }) });
@@ -1184,7 +1200,7 @@ Engine_grains : CroneEngine {
             ["bc_mix", fxBitcrush, \mix, 0.06], ["reso_mix", fxResonator, \mix, 5.1], ["wf_mix", fxWavefold, \mix, 0.06],
             ["ringmod_mix", fxRingmod, \mix, 0.06], ["stchorus_mix", fxStChorus, \mix, 0.06], ["vibe_mix", fxVibe, \mix, 0.06],
             ["spiral_mix", fxSpiral, \mix, 2.8], ["genloss_mix", fxGenloss, \mix, 0.06], ["sub_mix", fxSub, \mix, 0.06],
-            ["reel_mix", fxReel, \mix, 0.06], ["ott_mix", fxOtt, \mix, 0.06], ["rev_mix", fxVerb, \mix, 1.5], ["halo_mix", fxHalo, \mix, 2.1]
+            ["reel_mix", fxReel, \mix, 0.06], ["ott_mix", fxOtt, \mix, 0.06], ["rev_mix", fxVerb, \mix, 1.5], ["halo_mix", fxHalo, \mix, 2.1], ["prism_mix", fxPrism, \mix, 4.1]
         ].do({ arg r; this.addCommand(r[0], "f", { arg msg; r[1].set(r[2], msg[1]); this.fxRun(r[1], msg[1] != 0, r[3]) }) });
         this.addCommand("master", "f", { arg msg; fxLevel.set(\amp, msg[1]) });
         this.addCommand("m_width", "f", { arg msg; fxMain.set(\width, msg[1]) });
@@ -1242,7 +1258,7 @@ Engine_grains : CroneEngine {
         voices.do({ arg row; row.do({ arg x; if(x.notNil, { x.free }) }) });
         [reporter, fxMain, fxDelay, fxShimmer, fxTilt, fxDimension, fxEq, fxTape,
          fxShaper, fxWobble, fxBitcrush, fxWavefold, fxResonator, fxGlitch,
-         fxHaas, fxRotate, fxRingmod, fxStChorus, fxVibe, fxSpiral, fxGenloss, fxSub, fxReel, fxOtt, fxVerb, fxLevel, fxHalo, vfg, dg].do({ arg x; if(x.notNil, { x.free }); });
+         fxHaas, fxRotate, fxRingmod, fxStChorus, fxVibe, fxSpiral, fxGenloss, fxSub, fxReel, fxOtt, fxVerb, fxLevel, fxHalo, fxPrism, vfg, dg].do({ arg x; if(x.notNil, { x.free }); });
         if(pgv.notNil, { pgv.do({ arg g; if(g.notNil, { g.free }) }) });
         if(pg.notNil, { pg.free });
         (buffers ++ bufR).asSet.do({ arg b; if(b.notNil and: { b !== silent }, { b.free }) });

@@ -7,14 +7,14 @@ local GLYPH = {
   O = {"111", "101", "111"}, W = {"101", "111", "111"}, M = {"101", "010", "101"}, U = {"101", "101", "111"},
   c = {"11", "10", "11"}, S = {"011", "010", "110"}, G = {"110", "101", "111"}, T = {"111", "010", "010"},
   X = {"011101", "010111", "110101"}, D = {"110", "101", "110"}, R = {"111", "110", "101"},
-  Z = {"01111", "01010", "11010"}, C = {"111", "100", "111"}, L = {"100", "100", "111"}, H = {"101", "111", "101"}
+  Z = {"01111", "01010", "11010"}, C = {"111", "100", "111"}, L = {"100", "100", "111"}, H = {"101", "111", "101"}, P = {"111", "111", "100"}
 }
 
 local IDS = {"reverb_mix", "d_mix", "sh_mix", "sh_mod", "bc_mix", "bc_mod", "wf_mix", "reso_mix", "gl_ratio", "gl_mix",
   "tape_mix", "shaper_mix", "wobble_mix", "reel_mix", "genloss_mix", "ringmod_mix", "spiral_mix", "sub_mix", "ott_mix",
   "stchorus_mix", "m_width", "dimension_mix", "vibe_mix", "haas", "binaural", "rspeed", "eq_low", "eq_mid", "eq_high",
   "tilt", "cutoff", "vhpf", "d_sync", "morph_auto", "morph_sync", "vlfo", "vlfo_sync", "plfo", "plfo_sync", "rev_freeze",
-  "rlfo", "rlfo_sync", "vlfo_depth", "rlfo_depth", "plfo_depth", "plfo_mode", "plfo_steps", "halo_mix", "halo_sync"}
+  "rlfo", "rlfo_sync", "vlfo_depth", "rlfo_depth", "plfo_depth", "plfo_mode", "plfo_steps", "halo_mix", "halo_sync", "prism_mix"}
 
 local fx, objs = {}, {}
 local function poll() for i, id in ipairs(IDS) do fx[id] = objs[i]:get() end end
@@ -63,6 +63,7 @@ local SPECS = {
   {"G", "grains_glitch", function(c) return c.gl_ratio > 0 and c.gl_mix > 0 end, function(c) return c.gl_ratio end},
   {"T", "grains_tape", function(c) return c.tape_mix == 2 or c.shaper_mix > 0 or c.wobble_mix > 0 or c.reel_mix > 0 or c.genloss_mix > 0 end,
     function(c) return max(c.tape_mix == 2 and 25 or 0, c.shaper_mix, c.wobble_mix, c.reel_mix, c.genloss_mix) end},
+  {"P", "grains_prism", table.unpack(mix("prism_mix"))},
   {"X", "grains_shimmer", mix("sh_mix")[1], function(c) return c.sh_mod == 2 and c.sh_mix * sh_lfo(now_t) or c.sh_mix end},
   {"H", "grains_halo", table.unpack(mix("halo_mix"))},
   {"D", "grains_delay", table.unpack(mix("d_mix"))},
@@ -76,7 +77,7 @@ local SPECS = {
 local OFF = {
   F = {cutoff = 20000, vhpf = 20}, E = {eq_low = 0, eq_mid = 0, eq_high = 0, tilt = 0}, B = {bc_mix = 0},
   O = {reso_mix = 0}, W = {wf_mix = 0}, M = {ringmod_mix = 0}, U = {sub_mix = 0}, c = {ott_mix = 0},
-  S = {spiral_mix = 0}, G = {gl_ratio = 0}, X = {sh_mix = 0}, H = {halo_mix = 0}, D = {d_mix = 0}, R = {reverb_mix = -40, rev_freeze = 0},
+  S = {spiral_mix = 0}, G = {gl_ratio = 0}, X = {sh_mix = 0}, P = {prism_mix = 0}, H = {halo_mix = 0}, D = {d_mix = 0}, R = {reverb_mix = -40, rev_freeze = 0},
   T = {tape_mix = 1, shaper_mix = 0, wobble_mix = 0, reel_mix = 0, genloss_mix = 0},
   Z = {m_width = 100, haas = 1, binaural = 1, rspeed = 0}, C = {dimension_mix = 0, stchorus_mix = 0, vibe_mix = 0}
 }
