@@ -1001,7 +1001,7 @@ Engine_grains : CroneEngine {
             }));
 
             keep.(SynthDef(\grainsprism, {
-                arg bus, mix = 0, bright = 0.5, strike = 0.5, ring = 1, band = 1500, flush = 0;
+                arg bus, mix = 0, bright = 0.5, strike = 0.25, ring = 1, band = 1500, flush = 0;
                 var x = In.ar(bus, 2), hb = HPF.ar(x, band), h = LPF.ar(LPF.ar(hb, band * 2), band * 2), dt = [0.0173, 0.0229, 0.0293, 0.0359];
                 var en = LagUD.kr(Amplitude.kr(h[0].abs.max(h[1].abs), 0.002, 0.05), 0.004, 0.4), eb = Amplitude.kr(hb[0].abs.max(hb[1].abs), 0.004, 0.4) * 0.5;
                 var tr = LagUD.kr(((en / Lag.kr(en, 0.15).max(0.0001)) - 1.15).clip(0, 2), 0.004, 0.15), w4 = bright.squared * 4.8, w3 = bright * 3.2;

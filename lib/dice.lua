@@ -73,7 +73,7 @@ D.FX_SET = {
   halo = {{"halo_time", 0.3, 0.7, exp = true}, {"halo_fb", 25, 60}, {"halo_depth", 20, 70}, {"halo_rate", 0.15, 1.2, exp = true},
     {"halo_sat", 30, 85}, {"halo_tone", 2500, 6500, exp = true}, {"halo_lowcut", 20, 120}},
   shimmer = {{"sh_mod", chance = 30, on = 2, off = 1}},
-  prism = {{"prism_bright", 20, 90}, {"prism_strike", 0, 100}, {"prism_ring", 0.2, 2.5, exp = true}, {"prism_band", 600, 2200, exp = true}},
+  prism = {{"prism_bright", 20, 90}, {"prism_strike", 0, 50}, {"prism_ring", 0.2, 2.5, exp = true}, {"prism_band", 600, 2200, exp = true}},
   tape = {{"wobble_amp", 5, 50}, {"wobble_rpm", 30, 60}, {"flutter_amp", 10, 60}, {"flutter_freq", 3, 12, exp = true},
     {"flutter_var", 0.5, 4, exp = true}},
   chorus = {{"vibe_drift", 20, 80}},
