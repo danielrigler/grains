@@ -35,24 +35,29 @@ local function fmt(id, sf)
 end
 S.mo_fmt, S.vfmt, S.rfmt, S.pfmt = fmt("morph_div", "%.1f s"), fmt("vlfo_div", "%.2f s"), fmt("rlfo_div", "%.2f s"), fmt("plfo_div", "%.2f s")
 
-local dly_sent, dly_on = nil, false
-function S.dly_synced() return pv("d_sync") == 2 end
-local function dly_time()
-  local t = beats(pv("d_div")) * beat_sec()
-  while t > 5 do t = t * 0.5 end
-  return max(t, 0.02)
+function S.ms(t) return t < 1 and string.format("%d ms", floor(t * 1000 + 0.5)) or string.format("%.2f s", t) end
+local function tsync(p, hi, lo)
+  local o = {on = false}
+  local sync, div, time = p .. "_sync", p .. "_div", p .. "_time"
+  local function t()
+    local v = beats(pv(div)) * beat_sec()
+    while v > hi do v = v * 0.5 end
+    return max(v, lo)
+  end
+  function o.synced() return pv(sync) == 2 end
+  function o.refresh()
+    o.on = o.synced()
+    local v = o.on and t() or pv(time)
+    if o.sent and abs(o.sent - v) < 1e-6 then return end
+    o.sent = v
+    engine[time](v)
+  end
+  function o.fmt() return label(pv(div)) .. "  " .. S.ms(t()) end
+  return o
 end
-function S.dly_refresh()
-  dly_on = S.dly_synced()
-  local t = dly_on and dly_time() or pv("d_time")
-  if dly_sent and abs(dly_sent - t) < 1e-6 then return end
-  dly_sent = t
-  engine.d_time(t)
-end
-function S.dly_fmt()
-  local t = dly_time()
-  return label(pv("d_div")) .. "  " .. (t < 1 and string.format("%d ms", floor(t * 1000 + 0.5)) or string.format("%.2f s", t))
-end
+local DLY, HALO = tsync("d", 5, 0.02), tsync("halo", 2, 0.05)
+S.dly_synced, S.dly_refresh, S.dly_fmt = DLY.synced, DLY.refresh, DLY.fmt
+S.halo_synced, S.halo_refresh, S.halo_fmt = HALO.synced, HALO.refresh, HALO.fmt
 
 local function rnd(k, sd)
   local x = (k * 0x9E3779B1 + sd * 0x85EBCA77) & 0xFFFFFFFF
@@ -302,10 +307,11 @@ local function vis(on, ...)
 end
 
 function S.vis()
-  local pl, d, on, v, r, p = pv("rev_type") == 1, S.dly_synced(), S.mo_on(), S.von, S.ron, S.pon
+  local pl, d, h, on, v, r, p = pv("rev_type") == 1, DLY.synced(), HALO.synced(), S.mo_on(), S.von, S.ron, S.pon
   local m = on and S.mo_synced()
   vis(pl, "rev_freeze", "rev_series", "d_series", "rev_decay", "rev_damp", "rev_pre", "rev_mdepth", "rev_mrate")
   vis(d, "d_div") vis(not d, "d_time")
+  vis(h, "halo_div") vis(not h, "halo_time")
   vis(on, "morph_depth", "morph_shape", "morph_sync", "morph_slew")
   vis(m, "morph_div") vis(on and not m, "morph_rate")
   vis(v, "vlfo_shape", "vlfo_depth", "vlfo_sync") vis(v and vsync, "vlfo_div") vis(v and not vsync, "vlfo_freq")
@@ -322,11 +328,12 @@ function S.tick(now)
   last_t = now
   if dt < 0 or dt > 0.5 then dt = 1 / CHZ end
   local vclk, pclk = S.von and vsync, S.pon and psync
-  if dly_on or vclk or pclk then
+  if DLY.on or HALO.on or vclk or pclk then
     local bs = beat_sec()
     if bs ~= last_bs then
       last_bs = bs
-      if dly_on then S.dly_refresh() end
+      if DLY.on then DLY.refresh() end
+      if HALO.on then HALO.refresh() end
       if vclk then vrate() end
       if pclk then prate() end
     end

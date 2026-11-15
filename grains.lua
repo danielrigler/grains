@@ -1,7 +1,7 @@
 --
 --
 --
---          grains v0.26
+--          grains v0.27
 --           @dddstudio
 --
 --
@@ -1702,6 +1702,20 @@ local function setup_params()
   str("d_series", series_str)
   fxlock("delay")
 
+  group("halo", "HALO", 11)
+  pct("halo_mix", "Mix", 0)
+  ctl("halo_time", "Time", 0.05, 2, "exp", 0, 0.48, "s", Sync.halo_refresh)
+  str("halo_time", function(p) return Sync.ms(p:get()) end)
+  opt("halo_sync", "Time Base", TB, 1, function() Sync.halo_refresh() Sync.vis() end)
+  num("halo_div", "Division", 1, Sync.NDIV, Sync.DIV_QUART, Sync.halo_fmt, Sync.halo_refresh)
+  pct("halo_fb", "Feedback", 43)
+  pct("halo_depth", "Depth", 46)
+  ctl("halo_rate", "Rate", 0.1, 10, "exp", 0, 0.252, "Hz", true)
+  pct("halo_sat", "Saturation", 64)
+  ctl("halo_tone", "Tone", 1000, 8750, "exp", 1, 4350, "Hz", true)
+  ctl("halo_lowcut", "Low Cut", 0, 300, "lin", 1, 40, "Hz", true)
+  fxlock("halo")
+
   group("shimmer", "SHIMMER", 9)
   pct("sh_mix", "Mix", 0)
   opt("sh_mod", "Mix Mod", OFFON, 1, OPT)
@@ -1821,7 +1835,7 @@ local function setup_params()
   pct("gl_decay", "Decay", 0)
   fxlock("glitch")
   FXM.build(#params.params)
-  for _, id in ipairs({"d_mix", "sh_mix", "reel_mix", "shaper_mix", "wobble_mix", "genloss_mix", "dimension_mix",
+  for _, id in ipairs({"d_mix", "halo_mix", "sh_mix", "reel_mix", "shaper_mix", "wobble_mix", "genloss_mix", "dimension_mix",
     "stchorus_mix", "vibe_mix", "bc_mix", "wf_mix", "reso_mix", "ringmod_mix", "spiral_mix", "sub_mix", "ott_mix", "gl_ratio", "gl_mix"}) do
     local p = params:lookup_param(id)
     local s = p.string
