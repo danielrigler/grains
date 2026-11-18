@@ -153,6 +153,39 @@ local function vsend(i, key, val, eps)
   engine.set_one(i - 1, key, val)
 end
 
+local V5 = {}
+local function vsend5(i, keys, cmd)
+  local s, any = V[i].sent, false
+  for k = 1, 5 do
+    local key, val = keys[k], V5[k]
+    local was = s[key]
+    if was and abs(was - val) < 1e-6 then V5[k] = was else s[key], any = val, true end
+  end
+  if not any then return end
+  local f = engine[cmd]
+  if f then return f(i - 1, V5[1], V5[2], V5[3], V5[4], V5[5]) end
+  for k = 1, 5 do engine.set_one(i - 1, keys[k], V5[k]) end
+end
+
+local V6 = {}
+local function stage(i, key, val, eps)
+  local s = V[i].sent
+  local was = s[key]
+  if was and abs(was - val) < eps then V6[i] = was return false end
+  s[key], V6[i] = val, val
+  return true
+end
+
+local function send_all(key, n)
+  local f = engine.set_all
+  for i = 1, n do if V6[i] == nil then f = nil end end
+  if f then
+    for i = n + 1, NV do V6[i] = 0 end
+    return f(key, n, V6[1], V6[2], V6[3], V6[4], V6[5], V6[6])
+  end
+  for i = 1, n do if V6[i] ~= nil then engine.set_one(i - 1, key, V6[i]) end end
+end
+
 local function push_vp(p, only)
   local id, f, g = p[2], p[3], params:get(p[2])
   for i = only or 1, only or NV do
@@ -253,25 +286,30 @@ local function push_vol()
   local show, kdb = Sync.vshow, 0
   local rows, sc = matrix.WALL_ROWS, 1 / (Shuffle.VOL_MAX_DB - DB_FLOOR)
   if show then Sync.vshow, kdb = false, k ~= 1 and 20 * math.log(k, 10) or 0 end
+  local any = false
   for i = 1, nva do
     local v = V[i]
     if v.va then
       local a = min(v.va * v.vg * (v.frz and 1 or k), 1.9953)
-      vsend(i, "vamp", a, a * 0.004 + 1e-6)
+      if stage(i, "vamp", a, a * 0.004 + 1e-6) then any = true end
       if show then
         local f = clamp((v.volb or 0) + (v.vd + (v.frz and 0 or kdb)) * sc, 0, 1)
         if not v.volf or floor(f * rows + 0.5) ~= floor(v.volf * rows + 0.5) then dirty = true end
         v.volf = f
       end
+    else
+      V6[i] = v.sent.vamp
     end
   end
+  if any then send_all("vamp", nva) end
 end
 Sync.vpush = push_vol
 
 local function pq_push(i)
   local v = V[i]
   local d, dg, sc = v.pd, v.dg, v.psc
-  for k = 1, 5 do vsend(i, PQ[k], d == 0 and 1 or ratio(clamp(Scale.pitch(dg[k] + d, sc) - Scale.pitch(dg[k], sc), -24, 24))) end
+  for k = 1, 5 do V5[k] = d == 0 and 1 or ratio(clamp(Scale.pitch(dg[k] + d, sc) - Scale.pitch(dg[k], sc), -24, 24)) end
+  vsend5(i, PQ, "set_pq")
 end
 
 local function pitch_show(v, st)
@@ -286,21 +324,24 @@ local function push_pitch()
     local lag = Sync.plag()
     for i = 1, NV do vsend(i, "plag", lag) end
   end
-  local sm = Sync.psm
+  local sm, any = Sync.psm, false
   for i = 1, nva do
     local v = V[i]
     if v.on and not v.frz then
       local x = Sync.pval(i, nva)
       if sm then
-        vsend(i, "pm", ratio(x), 5e-5)
+        if stage(i, "pm", ratio(x), 5e-5) then any = true end
         pitch_show(v, x)
       elseif x ~= v.pd then
         v.pd = x
         pq_push(i)
         pitch_show(v, Scale.pitch(v.dg[1] + x, v.psc) - Scale.pitch(v.dg[1], v.psc))
       end
+    else
+      V6[i] = v.sent.pm
     end
   end
+  if any then send_all("pm", nva) end
 end
 Sync.ppush = push_pitch
 
@@ -335,8 +376,9 @@ local function push_per_voice()
     local tun, th, dg = ov(h, "tuning"), THR[i], v.dg
     for k = 1, 5 do
       dg[k] = deg + Scale.round(Scale.steps(ov(h, MD[k]), sc) * lsp)
-      vsend(i, LR[k], ratio(lad(tun + Scale.pitch(dg[k], sc), tun, fifth, th[k])))
+      V5[k] = ratio(lad(tun + Scale.pitch(dg[k], sc), tun, fifth, th[k]))
     end
+    vsend5(i, LR, "set_lr")
     v.psc = sc
     if v.pd ~= 0 then
       pq_push(i)
@@ -459,7 +501,7 @@ local function flush_population()
         local a, b = v.pit:window(L)
         v.ts[L], v.te[L], v.ls[L], v.le[L] = a, b, a, b
       end
-      v.nl = n
+      v.nl, v.lg = n, (v.lg or 0) + 1
       if n > 0 then engine.layers(i - 1, n) end
       voices_dirty, dirty = true, true
     end
@@ -616,14 +658,15 @@ local function physics_tick(now, step)
           WIN_FN(i - 1, table.unpack(wbuf, 1, WIN_N))
         end
       end
-      local ls, le, lc = v.ls, v.le, v.lc
+      local ls, le, lc, moved = v.ls, v.le, v.lc, false
       for L = 1, nl do
         local x0, x1 = ts[L], te[L]
         if gliding then x0, x1 = ls[L] + (x0 - ls[L]) * GLIDE_K, le[L] + (x1 - le[L]) * GLIDE_K end
-        ls[L], le[L] = x0, x1
+        if ls[L] ~= x0 or le[L] ~= x1 then ls[L], le[L], moved = x0, x1, true end
         local c0, c1 = floor(x0 * CW), floor(x1 * CW)
         if lc[L * 2 - 1] ~= c0 or lc[L * 2] ~= c1 then lc[L * 2 - 1], lc[L * 2], dirty = c0, c1, true end
       end
+      if moved then v.lg = (v.lg or 0) + 1 end
     end
   end
 end
@@ -2296,6 +2339,7 @@ function init()
   push_vps()
   push_per_voice()
   pop_dirty = true
+  local lfop = {}
   Grid.init{
     V = V,
     count = function() return nva end,
@@ -2331,7 +2375,11 @@ function init()
       toggle(id)
       pop_show("fx", (lk and "lock " or "freeze ") .. i .. (params:get(id) == 1 and ": ON" or ": OFF"))
     end,
-    lfofrac = function(p) return params:get(p) == 2 and params:get_raw(p .. "_depth") or 0 end,
+    lfofrac = function(p)
+      local t = lfop[p]
+      if not t then t = {params:lookup_param(p), params:lookup_param(p .. "_depth")} lfop[p] = t end
+      return t[1]:get() == 2 and t[2]:get_raw() or 0
+    end,
     lfo = function(d, tap, p)
       local on, id = params:get(p) == 2, p .. "_depth"
       local dp = params:lookup_param(id)

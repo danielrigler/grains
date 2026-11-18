@@ -17,7 +17,7 @@ local FX = G.FX
 local g, cfg, V
 local W = 16
 local led, sent, rq, pa, pb, anchor, held, used = {}, {}, {}, {}, {}, {}, {}, {}
-local kl, kh, ka, kb, ke, bprev = {}, {}, {}, {}, {}, {}
+local kl, kh, ka, kb, ke, bprev, rdirty, FXP = {}, {}, {}, {}, {}, {}, {}, {}
 local scan, sweep, sweep_on, backlog, resend, modv = 0, 0, false, true, nil, nil
 local rep_d, rep_t, rep_k, rep_v, pre
 local tn = 0
@@ -55,6 +55,7 @@ end
 local function resize()
   W = g and g.cols and g.cols > 0 and g.cols or 16
   for k = 1, W * DN do sent[k] = -99 end
+  for r = 1, DN do rdirty[r] = true end
   kl, kh, ka, kb, ke, bprev, backlog = {}, {}, {}, {}, {}, {}, true
 end
 
@@ -81,7 +82,7 @@ local function redraw()
     pa[i], pb[i] = a, b
     local eq = (ma > FAST or ma < -FAST or mb > FAST or mb < -FAST) and b - a >= 1 and 1 or EQ
     if live ~= kl[i] or hi ~= kh[i] or a ~= ka[i] or b ~= kb[i] or eq ~= ke[i] then
-      kl[i], kh[i], ka[i], kb[i], ke[i], dirty = live, hi, a, b, eq, true
+      kl[i], kh[i], ka[i], kb[i], ke[i], dirty, rdirty[i] = live, hi, a, b, eq, true, true
       for c = 0, W - 1 do
         local l = 0
         if live then
@@ -98,7 +99,11 @@ local function redraw()
     k = k + W
   end
   for c = 1, W do led[k + c], led[k + W + c] = 0, 0 end
-  for c = 1, math.min(#FX, W - 5) do meter(k + c, params:get_raw(FX[c][1])) end
+  for c = 1, math.min(#FX, W - 5) do
+    local p = FXP[c]
+    if not p then p = params:lookup_param(FX[c][1]) FXP[c] = p end
+    meter(k + c, p:get_raw())
+  end
   meter(k + W - 4, cfg.lfofrac("rlfo"))
   meter(k + W - 3, cfg.lfofrac("vlfo"))
   meter(k + W, cfg.densfrac())
@@ -111,19 +116,34 @@ local function redraw()
     led[k + W + W] = V[modv].frz and FX_HI or FX_LO
   end
   for j = k + 1, k + W + W do
-    if bprev[j] ~= led[j] then bprev[j], dirty = led[j], true end
+    if bprev[j] ~= led[j] then bprev[j], dirty, rdirty[(j - 1) // W + 1] = led[j], true, true end
   end
   if not dirty then return end
-  local N, nb, ns, last = W * DN, NBIG, NSMALL, nil
-  for q = 0, N - 1 do
-    local j = (scan + q) % N + 1
-    local d = math.abs(led[j] - sent[j])
-    local big = d >= BIG
-    if (big and nb > 0) or (not big and d >= HYST and ns > 0) then
-      if big then nb = nb - 1 else ns, last = ns - 1, j end
-      local l = floor(led[j] + 0.5)
-      sent[j] = l
-      g:led((j - 1) % W + 1, (j - 1) // W + 1, l)
+  local N, nb, ns, last, abs = W * DN, NBIG, NSMALL, nil, math.abs
+  local p, left = scan, N
+  while left > 0 do
+    local r = p // W + 1
+    local span = r * W - p
+    if span > left then span = left end
+    if rdirty[r] then
+      for j = p + 1, p + span do
+        local d = abs(led[j] - sent[j])
+        local big = d >= BIG
+        if (big and nb > 0) or (not big and d >= HYST and ns > 0) then
+          if big then nb = nb - 1 else ns, last = ns - 1, j end
+          local l = floor(led[j] + 0.5)
+          sent[j] = l
+          g:led((j - 1) % W + 1, r, l)
+        end
+      end
+    end
+    left, p = left - span, (p + span) % N
+  end
+  for r = 1, DN do
+    if rdirty[r] then
+      local pend = false
+      for j = (r - 1) * W + 1, r * W do if abs(led[j] - sent[j]) >= HYST then pend = true break end end
+      rdirty[r] = pend
     end
   end
   if ns == 0 then scan = last % N end

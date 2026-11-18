@@ -85,6 +85,7 @@ local function walk_to(k, sd, s)
   wkk[s], wb[s] = kk, b
 end
 
+local ck, cs, c0, c1, c2, c3 = {}, {}, {}, {}, {}, {}
 local function shape(sh, k, ph, sd, s)
   if sh == 1 then return 0.5 - 0.5 * cos(2 * pi * ph)
   elseif sh == 2 then return ph < 0.5 and ph * 2 or 2 - ph * 2
@@ -92,7 +93,15 @@ local function shape(sh, k, ph, sd, s)
   elseif sh == 4 then return 1 - ph
   elseif sh == 5 then return ph < 0.5 and 0 or 1
   elseif sh == 6 then
-    local p0, p1, p2, p3 = rnd(k - 1, sd), rnd(k, sd), rnd(k + 1, sd), rnd(k + 2, sd)
+    local p0, p1, p2, p3
+    local pk = ck[s]
+    if pk == k and cs[s] == sd then
+      p0, p1, p2, p3 = c0[s], c1[s], c2[s], c3[s]
+    else
+      if pk == k - 1 and cs[s] == sd then p0, p1, p2, p3 = c1[s], c2[s], c3[s], rnd(k + 2, sd)
+      else p0, p1, p2, p3 = rnd(k - 1, sd), rnd(k, sd), rnd(k + 1, sd), rnd(k + 2, sd) end
+      ck[s], cs[s], c0[s], c1[s], c2[s], c3[s] = k, sd, p0, p1, p2, p3
+    end
     local t2 = ph * ph
     return reflect(0.5 * (2 * p1 + (p2 - p0) * ph + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (3 * p1 - p0 - 3 * p2 + p3) * t2 * ph))
   elseif sh == 7 then

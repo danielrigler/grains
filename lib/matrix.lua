@@ -141,8 +141,11 @@ local cov, K0, K1, RUNS, RN, KEY = {}, {}, {}, {}, {}, {}
 for i = 1, M.NMAX do K0[i], K1[i], RUNS[i], RN[i], KEY[i] = {}, {}, {}, 0, {} end
 
 local function prep(v, i, nl, lvl)
-  local k0, k1, ls, le, key, top = K0[i], K1[i], v.ls, v.le, KEY[i], CW - 1
+  local key = KEY[i]
   local same = key.nl == nl and key.lvl == lvl and key.gen == GEN
+  if same and key.v == v and key.lg == v.lg then return end
+  key.v, key.lg = v, v.lg
+  local k0, k1, ls, le, top = K0[i], K1[i], v.ls, v.le, CW - 1
   for L = 1, nl do
     local c0 = floor(ls[L] * CW)
     c0 = c0 < 0 and 0 or c0 > top and top or c0
