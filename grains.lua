@@ -153,52 +153,93 @@ local function vsend(i, key, val, eps)
   engine.set_one(i - 1, key, val)
 end
 
-local V5 = {}
-local function vsend5(i, keys, cmd)
-  local s, any = V[i].sent, false
-  for k = 1, 5 do
-    local key, val = keys[k], V5[k]
+local Q = {}
+do
+  local V5, V6, SQ, SK = {}, {}, {}, {n = 0}
+  Q.v5, Q.v6 = V5, V6
+
+  function Q.five(i, keys, cmd)
+    local s, any = V[i].sent, false
+    for k = 1, 5 do
+      local key, val = keys[k], V5[k]
+      local was = s[key]
+      if was and abs(was - val) < 1e-6 then V5[k] = was else s[key], any = val, true end
+    end
+    if not any then return end
+    local f = engine[cmd]
+    if f then return f(i - 1, V5[1], V5[2], V5[3], V5[4], V5[5]) end
+    for k = 1, 5 do engine.set_one(i - 1, keys[k], V5[k]) end
+  end
+
+  function Q.stage(i, key, val, eps)
+    local s = V[i].sent
     local was = s[key]
-    if was and abs(was - val) < 1e-6 then V5[k] = was else s[key], any = val, true end
+    if was and abs(was - val) < eps then V6[i] = was return false end
+    s[key], V6[i] = val, val
+    return true
   end
-  if not any then return end
-  local f = engine[cmd]
-  if f then return f(i - 1, V5[1], V5[2], V5[3], V5[4], V5[5]) end
-  for k = 1, 5 do engine.set_one(i - 1, keys[k], V5[k]) end
-end
 
-local V6 = {}
-local function stage(i, key, val, eps)
-  local s = V[i].sent
-  local was = s[key]
-  if was and abs(was - val) < eps then V6[i] = was return false end
-  s[key], V6[i] = val, val
-  return true
-end
-
-local function send_all(key, n)
-  local f = engine.set_all
-  for i = 1, n do if V6[i] == nil then f = nil end end
-  if f then
-    for i = n + 1, NV do V6[i] = 0 end
-    return f(key, n, V6[1], V6[2], V6[3], V6[4], V6[5], V6[6])
+  function Q.all(key, n)
+    local f = engine.set_all
+    for i = 1, n do if V6[i] == nil then f = nil end end
+    if f then
+      for i = n + 1, NV do V6[i] = 0 end
+      return f(key, n, V6[1], V6[2], V6[3], V6[4], V6[5], V6[6])
+    end
+    for i = 1, n do if V6[i] ~= nil then engine.set_one(i - 1, key, V6[i]) end end
   end
-  for i = 1, n do if V6[i] ~= nil then engine.set_one(i - 1, key, V6[i]) end end
+
+  function Q.put(i, key, val, eps)
+    local s = V[i].sent
+    local was = s[key]
+    if was and abs(was - val) < (eps or 1e-6) then return end
+    s[key] = val
+    local t = SQ[key]
+    if not t then t = {} SQ[key] = t end
+    if not t.on then local n = SK.n + 1 t.on, SK.n, SK[n] = true, n, key end
+    t[i] = true
+  end
+
+  function Q.flush(n)
+    local f = engine.set_all
+    for j = 1, SK.n do
+      local key = SK[j]
+      local t, ok = SQ[key], f ~= nil
+      t.on = false
+      for i = 1, n do
+        local x = V[i].sent[key]
+        V6[i] = x
+        if x == nil then ok = false end
+      end
+      if ok then
+        for i = n + 1, NV do V6[i] = 0 end
+        f(key, n, V6[1], V6[2], V6[3], V6[4], V6[5], V6[6])
+      else
+        for i = 1, n do if t[i] then engine.set_one(i - 1, key, V[i].sent[key]) end end
+      end
+      for i = 1, NV do t[i] = nil end
+    end
+    SK.n = 0
+  end
 end
 
 local function push_vp(p, only)
   local id, f, g = p[2], p[3], params:get(p[2])
+  local send = only and vsend or Q.put
   for i = only or 1, only or NV do
     local h = V[i].ovr
     local x = h and h[id]
     if x == nil then x = g end
-    vsend(i, p[1], f and f(x) or x)
+    send(i, p[1], f and f(x) or x)
   end
+  if not only then Q.flush(NV) end
 end
 
 local function push_lag(only)
   local lag = Sync.vlag()
-  for i = only or 1, only or NV do vsend(i, "vampLag", lag) end
+  if only then return vsend(only, "vampLag", lag) end
+  for i = 1, NV do Q.put(i, "vampLag", lag) end
+  Q.flush(NV)
 end
 
 local function push_vps(only)
@@ -291,25 +332,26 @@ local function push_vol()
     local v = V[i]
     if v.va then
       local a = min(v.va * v.vg * (v.frz and 1 or k), 1.9953)
-      if stage(i, "vamp", a, a * 0.004 + 1e-6) then any = true end
+      if Q.stage(i, "vamp", a, a * 0.004 + 1e-6) then any = true end
       if show then
         local f = clamp((v.volb or 0) + (v.vd + (v.frz and 0 or kdb)) * sc, 0, 1)
         if not v.volf or floor(f * rows + 0.5) ~= floor(v.volf * rows + 0.5) then dirty = true end
         v.volf = f
       end
     else
-      V6[i] = v.sent.vamp
+      Q.v6[i] = v.sent.vamp
     end
   end
-  if any then send_all("vamp", nva) end
+  if any then Q.all("vamp", nva) end
 end
 Sync.vpush = push_vol
 
 local function pq_push(i)
   local v = V[i]
   local d, dg, sc = v.pd, v.dg, v.psc
-  for k = 1, 5 do V5[k] = d == 0 and 1 or ratio(clamp(Scale.pitch(dg[k] + d, sc) - Scale.pitch(dg[k], sc), -24, 24)) end
-  vsend5(i, PQ, "set_pq")
+  local v5 = Q.v5
+  for k = 1, 5 do v5[k] = d == 0 and 1 or ratio(clamp(Scale.pitch(dg[k] + d, sc) - Scale.pitch(dg[k], sc), -24, 24)) end
+  Q.five(i, PQ, "set_pq")
 end
 
 local function pitch_show(v, st)
@@ -330,7 +372,7 @@ local function push_pitch()
     if v.on and not v.frz then
       local x = Sync.pval(i, nva)
       if sm then
-        if stage(i, "pm", ratio(x), 5e-5) then any = true end
+        if Q.stage(i, "pm", ratio(x), 5e-5) then any = true end
         pitch_show(v, x)
       elseif x ~= v.pd then
         v.pd = x
@@ -338,10 +380,10 @@ local function push_pitch()
         pitch_show(v, Scale.pitch(v.dg[1] + x, v.psc) - Scale.pitch(v.dg[1], v.psc))
       end
     else
-      V6[i] = v.sent.pm
+      Q.v6[i] = v.sent.pm
     end
   end
-  if any then send_all("pm", nva) end
+  if any then Q.all("pm", nva) end
 end
 Sync.ppush = push_pitch
 
@@ -362,7 +404,7 @@ end
 
 local function push_per_voice()
   voices_dirty, dirty = false, true
-  local lsp, vrange = G.lspread * 0.01, Shuffle.VOL_MAX_DB - DB_FLOOR
+  local lsp, vrange, v5 = G.lspread * 0.01, Shuffle.VOL_MAX_DB - DB_FLOOR, Q.v5
   for i = 1, nva do
     local v, pid = V[i], PID[i]
     local s, h, frz = v.seed, v.ovr, v.frz
@@ -376,9 +418,9 @@ local function push_per_voice()
     local tun, th, dg = ov(h, "tuning"), THR[i], v.dg
     for k = 1, 5 do
       dg[k] = deg + Scale.round(Scale.steps(ov(h, MD[k]), sc) * lsp)
-      V5[k] = ratio(lad(tun + Scale.pitch(dg[k], sc), tun, fifth, th[k]))
+      v5[k] = ratio(lad(tun + Scale.pitch(dg[k], sc), tun, fifth, th[k]))
     end
-    vsend5(i, LR, "set_lr")
+    Q.five(i, LR, "set_lr")
     v.psc = sc
     if v.pd ~= 0 then
       pq_push(i)
@@ -387,13 +429,14 @@ local function push_per_voice()
     v.pitchf = clamp((v.pb + v.pst) / Shuffle.PITCH_HI, -1, 1)
     local emod, mr, pr, cut = 2 ^ (s.mr * var * 1.3), ov(h, "motionrate"), ov(h, "pitchrate"), ov(h, "cutoff")
     v.mr = (frz or mr <= RATE_OFF) and 0 or clamp(mr * emod, 0.02, 12)
-    vsend(i, "mrate", v.mr)
-    vsend(i, "prate", (frz or pr <= RATE_OFF) and 0 or clamp(pr * emod, 0.02, 12))
-    vsend(i, "cutoff", cut >= LPF_OFF - 1 and LPF_OFF or clamp(cut * 2 ^ (s.cut * var * 2.6), 90, LPF_OFF))
+    Q.put(i, "mrate", v.mr)
+    Q.put(i, "prate", (frz or pr <= RATE_OFF) and 0 or clamp(pr * emod, 0.02, 12))
+    Q.put(i, "cutoff", cut >= LPF_OFF - 1 and LPF_OFF or clamp(cut * 2 ^ (s.cut * var * 2.6), 90, LPF_OFF))
     v.vbase = ivol <= -59.5 and -100 or clamp(LEVEL_REF + ivol + (LAYER_TRIM[v.act] or 0) + s.lvl * var * 7 + (G.src_norm == 2 and v.ndb or 0), -100, LEVEL_REF + 26)
-    if not Sync.von then vsend(i, "vamp", amp(v.vbase)) end
-    vsend(i, "ampfloor", clamp(ov(h, "ampfloor") * 0.01 + s.floor * var * 0.35, 0, 1))
+    if not Sync.von then Q.put(i, "vamp", amp(v.vbase)) end
+    Q.put(i, "ampfloor", clamp(ov(h, "ampfloor") * 0.01 + s.floor * var * 0.35, 0, 1))
   end
+  Q.flush(nva)
   if Sync.von then push_vol() end
 end
 
@@ -1875,7 +1918,7 @@ local function setup_params()
   fxlock("ott")
 
   group("glitch", "GLITCH", 10)
-  pct("gl_ratio", "Glitch", 0, function(v) engine.gl_ratio((v * 0.01) ^ 2) end)
+  pct("gl_ratio", "Glitch", 0, function(v) send("gl_ratio", (v * 0.01) ^ 2) end)
   pct("gl_mix", "Mix", 100)
   ctl("gl_min", "Min Length", 10, 500, "lin", 1, 75, "ms", 0.001)
   ctl("gl_max", "Max Length", 20, 500, "lin", 1, 200, "ms", 0.001)
@@ -1914,7 +1957,7 @@ local function setup_params()
   group("morph", "MORPH", 12)
   ctl("morph", "Morph", 0, 100, "lin", 0.5, 0, "%", function(v)
     if not Sync.driving and Sync.mo_on() then params:set("morph_auto", 1) end
-    Morph.set(v * 0.01)
+    Morph.set(v * 0.01, Sync.driving)
     dirty = true
   end)
   trig("do_store_a", "Store A", function() params:set("morph_auto", 1) Morph.store(1) dirty = true end)
@@ -1922,6 +1965,7 @@ local function setup_params()
   trig("do_store_clear", "Clear Morph", function() Morph.clear() dirty = true end)
   opt("morph_auto", "LFO", OFFON, 1, function(v)
     if v == 2 and params:get("morph_depth") <= 0 then params:set("morph_depth", 100) end
+    if v == 1 then Morph.set(Morph.pos) end
     Sync.vis()
     dirty = true
   end)
@@ -2025,6 +2069,11 @@ do
   }
 end
 
+function sys.outdated()
+  sys.stale, dirty = util.time() + 12, true
+  print("grains: engine changed since norns started -- restart norns (SYSTEM > RESTART)")
+end
+
 local function setup_osc()
   osc.event = function(path, args)
     if path == "/grains/state" then
@@ -2039,7 +2088,7 @@ local function setup_osc()
           pos[L] = p
           if v.on then
             local k = floor(p * CW)
-            if pc[L] ~= k then pc[L], dirty = k, true end
+            if pc[L] ~= k then pc[L], sys.pd = k, true end
           end
         end
       end
@@ -2076,6 +2125,8 @@ local function setup_osc()
       LIVE.saved(i, (args[2] or 0) > 0)
     elseif path == "/grains/rec_done" then
       REC.done((args[1] or 0) > 0)
+    elseif path == "/grains/hello" then
+      if (args[1] or 0) > 0 then sys.outdated() end
     end
   end
 end
@@ -2116,6 +2167,7 @@ function redraw(now)
   elseif st then
     matrix.recpopup(REC.txt or "")
   end
+  if sys.stale then matrix.recpopup("engine updated", nil, nil, "SYSTEM > RESTART") end
   screen.update()
 end
 
@@ -2208,6 +2260,7 @@ end
 function key(n, z)
   dirty = true
   if installer:pending() then return installer:key(n, z) end
+  if z == 1 then sys.stale = nil end
   if REC.state then
     if z == 0 then return Keys.release(n) end
     if REC.state == "rec" then REC.stop()
@@ -2257,6 +2310,7 @@ local function frame()
     Sync.tick(now)
     physics_tick(now, sys.n % 4 == 0)
     Grid.tick(now)
+    if sys.pd then sys.pd, dirty = false, true end
   end
   Keys.tick(now)
   if font.tick(now) then dirty = true end
@@ -2296,6 +2350,7 @@ local function frame()
     REC.finish(st == "save" and "failed" or nil)
   end
   if installer:pending() then dirty = true end
+  if sys.stale and now >= sys.stale then sys.stale, dirty = nil, true end
   local up = menu_up()
   if up ~= sys.menu then
     sys.menu = up
@@ -2330,7 +2385,7 @@ function init()
   font.init()
   FXM.check(util.time())
   refresh_layout()
-  Morph.init(sys.first, sys.last, morph_skip)
+  Morph.init(sys.first, sys.last, morph_skip, function(id) return not id:find("^%d") end)
   UN.build(sys.first, sys.last)
   Undo.init{capture = UN.capture, restore = UN.restore, depth = 10, hold = 0.7}
   params.action_write = pset_write
@@ -2408,6 +2463,7 @@ function init()
     end
   }
   engine.report_rate(30)
+  if engine.hello then engine.hello() else sys.outdated() end
   sys.metro = metro.init()
   sys.metro.time, sys.metro.event = 1 / FPS, frame
   sys.metro:start()

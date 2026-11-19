@@ -1,11 +1,21 @@
 local M = {pos = 0, dirty = false}
 
-local mp, ma, mb, mc, mlo, msp, mnum, mid, act, byid = {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
-local n, nact, relist, applying, linked = 0, 0, true, false, true
+local mp, ma, mb, mc, mlo, msp, mnum, mid, act, byid, slow, ceps = {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
+local n, nact, relist, applying, linked, auto, tick = 0, 0, true, false, true, false, 0
 local cpos, target = nil, nil
-local EPS, ARRIVED, floor = 1e-3, 0.99, math.floor
+local EPS, COARSE, ARRIVED, floor = 1e-3, 1 / 256, 0.99, math.floor
 
 local function c01(x) return x < 0 and 0 or x > 1 and 1 or x end
+
+local function coarse(p, P)
+  local cs = p.t == P.tCONTROL and p.controlspec
+  if cs and cs.minval > 0 and cs.maxval > cs.minval then
+    local lo, hi = cs.minval, cs.maxval
+    local mid = cs:map(0.5)
+    if math.abs(mid - math.sqrt(lo * hi)) < math.abs(mid - (lo + hi) * 0.5) then return math.max(EPS, 0.00995 / math.log(hi / lo)) end
+  end
+  return COARSE
+end
 
 local function span(k)
   local p = mp[k]
@@ -19,7 +29,7 @@ local function raw_of(k)
   return mp[k]:get_raw()
 end
 
-local function write(k, v, exact)
+local function write(k, v, exact, eps)
   local p = mp[k]
   local lo, sp = span(k)
   if sp then
@@ -29,7 +39,7 @@ local function write(k, v, exact)
     return (at - lo) / sp
   end
   local at = p:get_raw()
-  if (exact and at ~= v) or (not exact and (v < at - EPS or v > at + EPS)) then p:set_raw(v) return v end
+  if (exact and at ~= v) or (not exact and (v < at - eps or v > at + eps)) then p:set_raw(v) return v end
   return at
 end
 
@@ -70,14 +80,14 @@ function M.hold(f)
   if not ok then error(err, 0) end
 end
 
-function M.set(pos)
+function M.set(pos, a)
   pos = c01(pos)
   if pos >= 1 then linked = false end
   if target and pos ~= M.pos then target = nil end
-  M.pos, M.dirty = pos, true
+  M.pos, M.dirty, auto = pos, true, a == true
 end
 
-function M.init(first, last, skip)
+function M.init(first, last, skip, lazy)
   n, target, cpos = 0, nil, nil
   local P = params
   for i = first, last do
@@ -89,6 +99,7 @@ function M.init(first, last, skip)
         n = n + 1
         local k = n
         mp[k], mid[k], byid[p.id], mlo[k], msp[k], mnum[k] = p, p.id, k, lo, sp, p.t == P.tNUMBER
+        slow[k], ceps[k] = lazy and lazy(p.id) or false, coarse(p, P)
         ma[k] = raw_of(k)
         mb[k] = ma[k]
         local prev = p.action
@@ -127,11 +138,17 @@ function M.apply()
   local X, Y, t = ma, mb, pos
   if e then X, Y, t = mc, e, f end
   local g, changed = 1 - t, false
+  tick = tick + 1
+  local skip = auto and not into and tick % 2 == 1
   applying = true
   for j = 1, nact do
     local k = act[j]
-    local r = write(k, c01(X[k] * g + Y[k] * t), into ~= nil)
-    if into and r ~= into[k] then into[k], changed = r, true end
+    if skip and slow[k] then
+      M.dirty = true
+    else
+      local r = write(k, c01(X[k] * g + Y[k] * t), into ~= nil, auto and ceps[k] or EPS)
+      if into and r ~= into[k] then into[k], changed = r, true end
+    end
   end
   applying = false
   if changed then relist = true end
