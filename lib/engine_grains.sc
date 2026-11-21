@@ -692,9 +692,9 @@ Engine_grains : CroneEngine {
         var fin = { arg m, hold; var l = Lag.kr(m, 0.04); l.min(DelayN.kr(l, hold, hold)) };
         var defDir, stamp, cached, keep, stale;
         var bpan = { arg x, az, v;
-            var th = az.abs.min(1) * 0.5pi, tk = SampleRate.ir / 3920, d = (tk + 1).reciprocal, b1 = (tk - 1) * d;
-            var hs = { arg s, t; var a = (t * 1.2).cos.madd(1.2566, 1.3889) * tk; FOS.ar(s, (a + 1) * d, (1 - a) * d, b1) };
-            var n = hs.(Delay1.ar(x), 0.5pi - th) * (v * 0.707), f = hs.(DelayL.ar(x, 0.001, 0.000255 * (th + th.sin) + SampleDur.ir), 0.5pi + th) * (v * 0.707), r = az > 0;
+            var tk = SampleRate.ir / 3920, d = (tk + 1).reciprocal, k = 1.2566 * tk * d, c = 0.3889 * tk * d;
+            var th = az.abs * 0.5pi, g = x * (v * 0.707), h = LeakDC.ar(g, (tk - 1) * d);
+            var n = Delay1.ar(h * (cos(th * -1.2 + 0.6pi) * k + c) + g), f = DelayL.ar(h * (cos(th * 1.2 + 0.6pi) * k + c) + g, 0.001, (th + th.sin) * 0.000255 + SampleDur.ir), r = az > 0;
             [Select.ar(r, [n, f]), Select.ar(r, [f, n])]
         };
         nornsAddr = NetAddr("127.0.0.1", 10111);
