@@ -7,14 +7,15 @@ local GLYPH = {
   O = {"111", "101", "111"}, W = {"101", "111", "111"}, M = {"101", "010", "101"}, U = {"101", "101", "111"},
   c = {"11", "10", "11"}, S = {"011", "010", "110"}, G = {"110", "101", "111"}, T = {"111", "010", "010"},
   X = {"011101", "010111", "110101"}, D = {"110", "101", "110"}, R = {"111", "110", "101"},
-  Z = {"01111", "01010", "11010"}, C = {"111", "100", "111"}, L = {"100", "100", "111"}, H = {"101", "111", "101"}, P = {"111", "111", "100"}
+  Z = {"01111", "01010", "11010"}, C = {"111", "100", "111"}, L = {"100", "100", "111"}, H = {"101", "111", "101"}, P = {"111", "111", "100"},
+  oU = {"010", "101", "000"}, oD = {"000", "101", "010"}, oB = {"010", "101", "010"}
 }
 
 local IDS = {"reverb_mix", "d_mix", "sh_mix", "sh_mod", "bc_mix", "bc_mod", "wf_mix", "reso_mix", "gl_ratio", "gl_mix",
-  "tape_mix", "shaper_mix", "wobble_mix", "reel_mix", "genloss_mix", "ringmod_mix", "spiral_mix", "sub_mix", "ott_mix",
-  "stchorus_mix", "m_width", "dimension_mix", "vibe_mix", "haas", "binaural", "rspeed", "eq_low", "eq_mid", "eq_high",
+  "tape_mix", "shaper_mix", "wobble_mix", "reel_mix", "genloss_mix", "ringmod_mix", "spiral_mix", "sub_mix", "super_mix", "ott_mix",
+  "stchorus_mix", "m_width", "dimension_mix", "vibe_mix", "haas", "rspeed", "eq_low", "eq_mid", "eq_high",
   "tilt", "cutoff", "vhpf", "d_sync", "morph_auto", "morph_sync", "vlfo", "vlfo_sync", "plfo", "plfo_sync", "rev_freeze",
-  "rlfo", "rlfo_sync", "vlfo_depth", "rlfo_depth", "plfo_depth", "plfo_mode", "plfo_steps", "halo_mix", "halo_sync", "prism_mix"}
+  "rlfo", "rlfo_sync", "vlfo_depth", "rlfo_depth", "plfo_depth", "plfo_mode", "plfo_steps", "halo_mix", "halo_sync", "prism_mix", "prog", "prog_sync"}
 
 local fx, objs = {}, {}
 local function poll() for i, id in ipairs(IDS) do fx[id] = objs[i]:get() end end
@@ -40,7 +41,7 @@ local function eqdev(c) return max(max(abs(c.eq_low), abs(c.eq_mid), abs(c.eq_hi
 local function mix(id) return {function(c) return c[id] > 0 end, function(c) return c[id] end} end
 local function clock_on(c)
   return (c.d_sync == 2 and c.d_mix > 0) or (c.halo_sync == 2 and c.halo_mix > 0) or (c.morph_auto == 2 and c.morph_sync == 2) or (c.vlfo == 2 and c.vlfo_sync == 2) or (c.plfo == 2 and c.plfo_sync == 2)
-    or (c.rlfo == 2 and c.rlfo_sync == 2)
+    or (c.rlfo == 2 and c.rlfo_sync == 2) or (c.prog > 1 and c.prog_sync == 2)
 end
 local PLF = 1 / log(1200)
 local function vd(c) return c.vlfo == 2 and c.vlfo_depth / 36 or 0 end
@@ -57,7 +58,8 @@ local SPECS = {
   {"O", "grains_reso", table.unpack(mix("reso_mix"))},
   {"W", "grains_wavefold", table.unpack(mix("wf_mix"))},
   {"M", "grains_ringmod", table.unpack(mix("ringmod_mix"))},
-  {"U", "grains_sub", table.unpack(mix("sub_mix"))},
+  {"U", "grains_sub", function(c) return c.sub_mix > 0 or c.super_mix > 0 end, function(c) return max(c.sub_mix, c.super_mix) end,
+    function(c) return c.sub_mix <= 0 and "oU" or c.super_mix <= 0 and "oD" or "oB" end},
   {"c", "grains_ott", table.unpack(mix("ott_mix"))},
   {"S", "grains_spiral", table.unpack(mix("spiral_mix"))},
   {"G", "grains_glitch", function(c) return c.gl_ratio > 0 and c.gl_mix > 0 end, function(c) return c.gl_ratio end},
@@ -68,23 +70,23 @@ local SPECS = {
   {"H", "grains_halo", table.unpack(mix("halo_mix"))},
   {"D", "grains_delay", table.unpack(mix("d_mix"))},
   {"R", "grains_reverb", function(c) return c.reverb_mix > -40 end, function(c) return c.rev_freeze == 1 and 100 or (c.reverb_mix + 40) / 58 * 100 end},
-  {"Z", "grains_dimension", function(c) return c.m_width ~= 100 or c.haas == 2 or c.binaural == 2 or c.rspeed > 0 end,
-    function(c) return max(abs(c.m_width - 100) / 100, (c.haas == 2 or c.binaural == 2) and 0.25 or 0, c.rspeed) * 100 end},
+  {"Z", "grains_dimension", function(c) return c.m_width ~= 100 or c.haas == 2 or c.rspeed > 0 end,
+    function(c) return max(abs(c.m_width - 100) / 100, c.haas == 2 and 0.25 or 0, c.rspeed) * 100 end},
   {"C", "grains_chorus", function(c) return c.dimension_mix > 0 or c.stchorus_mix > 0 or c.vibe_mix > 0 end,
     function(c) return max(c.dimension_mix, c.stchorus_mix, c.vibe_mix) end}
 }
 
 local OFF = {
   F = {cutoff = 20000, vhpf = 20}, E = {eq_low = 0, eq_mid = 0, eq_high = 0, tilt = 0}, B = {bc_mix = 0},
-  O = {reso_mix = 0}, W = {wf_mix = 0}, M = {ringmod_mix = 0}, U = {sub_mix = 0}, c = {ott_mix = 0},
+  O = {reso_mix = 0}, W = {wf_mix = 0}, M = {ringmod_mix = 0}, U = {sub_mix = 0, super_mix = 0}, c = {ott_mix = 0},
   S = {spiral_mix = 0}, G = {gl_ratio = 0}, X = {sh_mix = 0}, P = {prism_mix = 0}, H = {halo_mix = 0}, D = {d_mix = 0}, R = {reverb_mix = -40, rev_freeze = 0},
   T = {tape_mix = 1, shaper_mix = 0, wobble_mix = 0, reel_mix = 0, genloss_mix = 0},
-  Z = {m_width = 100, haas = 1, binaural = 1, rspeed = 0}, C = {dimension_mix = 0, stchorus_mix = 0, vibe_mix = 0}
+  Z = {m_width = 100, haas = 1, rspeed = 0}, C = {dimension_mix = 0, stchorus_mix = 0, vibe_mix = 0}
 }
 
 local CLOCK_AT = {{1, 2}, {2, 3}, {3, 2}, {2, 1}}
 local last, clk, clk_pos = -1, false, -1
-local buf, shown = {}, {}
+local buf, shown, shownG = {}, {}, {}
 
 function F.init()
   for i, id in ipairs(IDS) do objs[i] = params:lookup_param(id) end
@@ -109,14 +111,14 @@ function F.tick(now)
   for _, s in ipairs(SPECS) do
     if s[3](fx) then
       ns = ns + 1
-      shown[ns] = s
-      width = width + #GLYPH[s[1]][1] + 1
+      shown[ns], shownG[ns] = s, GLYPH[s[5] and s[5](fx) or s[1]]
+      width = width + #shownG[ns][1] + 1
     end
   end
   local x, n = math.max(128 - width, 0), 0
   for k = 1, ns do
     local s = shown[k]
-    local g = GLYPH[s[1]]
+    local g = shownG[k]
     local lv = s[4] and 1 + floor(math.min(max(s[4](fx), 0), 100) * 0.14)
     local cr, cc = at[1], at[2]
     for row = 1, 3 do

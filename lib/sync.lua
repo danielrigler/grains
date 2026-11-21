@@ -34,6 +34,8 @@ local function fmt(id, sf)
   end
 end
 S.mo_fmt, S.vfmt, S.rfmt, S.pfmt = fmt("morph_div", "%.1f s"), fmt("vlfo_div", "%.2f s"), fmt("rlfo_div", "%.2f s"), fmt("plfo_div", "%.2f s")
+S.prfmt = fmt("prog_div", "%.1f s")
+function S.count(d) return floor(beats_now() / beats(d)) end
 
 function S.ms(t) return t < 1 and string.format("%d ms", floor(t * 1000 + 0.5)) or string.format("%.2f s", t) end
 local function tsync(p, hi, lo)
@@ -327,6 +329,10 @@ function S.vis()
   vis(r, "rlfo_mode", "rlfo_shape", "rlfo_depth", "rlfo_spread", "rlfo_sync") vis(r and rsync, "rlfo_div") vis(r and not rsync, "rlfo_freq")
   vis(p, "plfo_mode", "plfo_shape", "plfo_spread", "plfo_sync") vis(p and S.psm, "plfo_depth") vis(p and not S.psm, "plfo_steps")
   vis(p and psync, "plfo_div") vis(p and not psync, "plfo_freq")
+  local pg, pc = pv("prog"), pv("prog_sync") == 2
+  local cu = pg == PP.prog.count
+  vis(pg > 1, "prog_sync") vis(pg > 1 and pc, "prog_div") vis(pg > 1 and not pc, "prog_time") vis(cu, "prog_c1", "prog_c2", "prog_c3", "prog_c4")
+  vis(pg > 1, "prog_chance")
   if _menu and type(_menu.rebuild_params) == "function" then _menu.rebuild_params() end
 end
 

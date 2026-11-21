@@ -194,7 +194,7 @@ end
 
 local function cell_over(v, i, nl, sel, blink)
   local x, y = CX[i], CY[i]
-  if v.lhead and not v.xf then R(5, x + floor(v.lhead * CW / M.RAW), y, 1, BOT + 1) end
+  if v.lhead and not v.xf then R(sel and 15 or 5, x + floor(v.lhead * CW / M.RAW), y, 1, BOT + 1) end
   if nl > 0 and not v.xf then
     local k0, k1, pos, rd = K0[i], K1[i], v.pos, rails(nl)
     local half = rd.half
@@ -214,7 +214,7 @@ local function cell_over(v, i, nl, sel, blink)
       else
         R(rl, xa, ry, b - a + 1, 1)
       end
-      local p = pos[L]
+      local p = not v.mute and pos[L]
       if p then
         local c = floor(p * CW)
         R(15, x + (c < a and a or c > b and b or c), ry - half, 1, ch)

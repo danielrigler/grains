@@ -1,7 +1,7 @@
 --
 --
 --
---          grains v0.28
+--          grains v0.29
 --           @dddstudio
 --
 --
@@ -132,6 +132,18 @@ local DICE_IDS = {table.unpack(SCALARS)}
 for _, p in ipairs(VP) do DICE_IDS[#DICE_IDS + 1] = p[2] end
 local LAYER_TRIM = {}
 for n = 1, NL do LAYER_TRIM[n] = -10 * math.log(n, 10) end
+
+local PRG = {deg = 1, i = 0, p = 1, sync = true, div = 18, T = 8, t = 0, hold = 0, chance = 100, MIN = {0, 2, 3, 5, 7, 8, 10}, MAJ = {0, 2, 4, 5, 7, 9, 10},
+  names = {"OFF", "I-IV", "I-V", "I-VI-IV-V", "I-V-VI-IV", "VI-IV-I-V", "I-VI-III-VII", "I-IV-V", "II-V-I", "I-VII", "I-VI-VII", "random walk", "custom"},
+  list = {{1, 4}, {1, 5}, {1, 6, 4, 5}, {1, 5, 6, 4}, {6, 4, 1, 5}, {1, 6, 3, 7}, {1, 4, 5}, {2, 5, 1}, {1, 7}, {1, 6, 7}},
+  walk = {1, 1, 2, 3, 4, 4, 5, 5, 6, 6, 7}, n = 13}
+
+function PRG.shift(d, sc)
+  if d <= 1 then return 0, 0 end
+  if Scale.size(sc) == 7 then return d > 4 and d - 8 or d - 1, 0 end
+  local st = (Scale.has(3, sc) and not Scale.has(4, sc) and PRG.MIN or PRG.MAJ)[d]
+  return 0, st > 6 and st - 12 or st
+end
 
 local function new_voice()
   local v = {at = 0, tries = 0, nl = 0, act = 0, b0 = 0, b1 = 1, lo = 0, hi = 1, rg = 1, pb = 0, pd = 0, pst = 0, pitchf = 0,
@@ -338,6 +350,8 @@ local function push_vol()
         if not v.volf or floor(f * rows + 0.5) ~= floor(v.volf * rows + 0.5) then dirty = true end
         v.volf = f
       end
+    elseif v.vbase then
+      if Q.stage(i, "vamp", 0, 1e-6) then any = true end
     else
       Q.v6[i] = v.sent.vamp
     end
@@ -413,12 +427,15 @@ local function push_per_voice()
     if not Sync.von or not v.volf then v.volf = v.volb end
     v.pb = itune * pamt
     local var, sc = ov(h, "variance") * 0.01, ov(h, "scale")
+    if not frz then v.cdeg = PRG.deg end
+    local cd, cs = PRG.shift(v.cdeg or 1, sc)
     local fifth = Scale.fifth(sc)
-    local deg = Scale.round(s.tune * ov(h, "spread") * 0.02 * Scale.size(sc)) + Scale.near(itune, sc)
-    local tun, th, dg = ov(h, "tuning"), THR[i], v.dg
+    local deg = Scale.round(s.tune * ov(h, "spread") * 0.02 * Scale.size(sc)) + Scale.near(itune, sc) + cd
+    local tun, th, dg = ov(h, "tuning") + cs, THR[i], v.dg
+    local root = cd == 0 and tun or tun + Scale.pitch(cd, sc)
     for k = 1, 5 do
       dg[k] = deg + Scale.round(Scale.steps(ov(h, MD[k]), sc) * lsp)
-      v5[k] = ratio(lad(tun + Scale.pitch(dg[k], sc), tun, fifth, th[k]))
+      v5[k] = ratio(lad(tun + Scale.pitch(dg[k], sc), root, fifth, th[k]))
     end
     Q.five(i, LR, "set_lr")
     v.psc = sc
@@ -434,6 +451,12 @@ local function push_per_voice()
     Q.put(i, "cutoff", cut >= LPF_OFF - 1 and LPF_OFF or clamp(cut * 2 ^ (s.cut * var * 2.6), 90, LPF_OFF))
     v.vbase = ivol <= -59.5 and -100 or clamp(LEVEL_REF + ivol + (LAYER_TRIM[v.act] or 0) + s.lvl * var * 7 + (G.src_norm == 2 and v.ndb or 0), -100, LEVEL_REF + 26)
     if not Sync.von then Q.put(i, "vamp", amp(v.vbase)) end
+    local m = ivol <= -59.5
+    if m ~= (v.mute == true) then
+      v.mute, dirty = m, true
+      local f = engine.mute
+      if f then f(i - 1, m and 1 or 0) end
+    end
     Q.put(i, "ampfloor", clamp(ov(h, "ampfloor") * 0.01 + s.floor * var * 0.35, 0, 1))
   end
   Q.flush(nva)
@@ -759,7 +782,7 @@ end
 local function clear_voice(i)
   local v = V[i]
   if LIVE.slot == i then LIVE.slot = nil end
-  fpend[i], v.file, v.len, v.at, v.pin, v.tries = nil, nil, nil, 0, nil, 0
+  fpend[i], v.file, v.len, v.at, v.pin, v.tries, v.mute = nil, nil, nil, 0, nil, 0, nil
   unload_view(v)
   params:set(PID[i].file, AUDIO, true)
   engine.clear(i - 1)
@@ -1337,6 +1360,14 @@ end
 
 local function pset_read(fn)
   Undo.clear()
+  local f = io.open(fn, "r")
+  if f then
+    local s = f:read("a")
+    f:close()
+    for id, d in pairs({prog = 1, prog_sync = 2, prog_div = 18, prog_time = 8, prog_c1 = 2, prog_c2 = 7, prog_c3 = 5, prog_c4 = 6, prog_chance = 100, rec_lsrc = 1, super_mix = 0, prism_tone = 50}) do
+      if not s:find('"' .. id .. '"', 1, true) then params:set(id, d) end
+    end
+  end
   local ok, t = pcall(loadfile(fn .. PSX, "t", {}))
   if not ok or type(t) ~= "table" then return end
   voices_set(t.v)
@@ -1465,7 +1496,8 @@ local function orig_block() if orig then pop_show("fx", "original pitch") return
 
 function LIVE.args()
   local mon = params:get("rec_lmon")
-  return amp(params:get("rec_gain")), params:get("rec_src") - 1, mon <= DB_FLOOR and 0 or amp(mon), params:get("rec_lpre") * 0.01, params:get("rec_norm") == 2 and amp(-6) or 0
+  return amp(params:get("rec_gain")), params:get("rec_src") - 1, mon <= DB_FLOOR and 0 or amp(mon), params:get("rec_lpre") * 0.01, params:get("rec_norm") == 2 and amp(-6) or 0,
+    params:get("rec_lsrc") - 1
 end
 
 function LIVE.input() if LIVE.slot then engine.live_in(LIVE.args()) end end
@@ -1513,7 +1545,7 @@ function LIVE.go(fresh)
   end
   LIVE.start(i)
   sel = i
-  pop_show("fx", "live: S" .. i)
+  pop_show("fx", (params:get("rec_lsrc") == 2 and "resample: S" or "live: S") .. i)
 end
 
 function LIVE.save()
@@ -1563,12 +1595,78 @@ local function reso_root() return clamp(params:get("reso_root") + params:get("tu
 
 local function reso_update()
   if params:get("reso_mix") <= 0 then return end
-  local d, base, diff = RESO_V[reso.v] or Scale.chord(params:get("scale"), reso.tones), reso_root() - 69, false
+  local sc = params:get("scale")
+  local d, base, diff = RESO_V[reso.v] or Scale.chord(sc, reso.tones), reso_root() - 69, false
+  local cd, cs = PRG.shift(PRG.deg, sc)
+  local cr = cs + Scale.pitch(cd, sc)
   for i = 1, 5 do
-    local f = 440 * 2 ^ ((base + d[i]) / 12)
+    local st = d[i] + cr
+    if cd ~= 0 and st == floor(st) then st = Scale.snap(st, sc) end
+    local f = 440 * 2 ^ ((base + st) / 12)
     if reso.sent[i] ~= f then reso.sent[i], diff = f, true end
   end
   if diff then engine.reso_freqs(table.unpack(reso.sent, 1, 5)) end
+end
+
+function PRG.seq()
+  if PRG.p < PRG.n then return PRG.list[PRG.p - 1] end
+  local t = {}
+  for k = 1, 4 do
+    local x = params:get("prog_c" .. k)
+    if x > 1 then t[#t + 1] = x - 1 end
+  end
+  return #t > 0 and t or {1}
+end
+
+function PRG.set(d)
+  if d == PRG.deg then return end
+  PRG.deg, voices_dirty = d, true
+  reso_update()
+end
+
+function PRG.step(k)
+  if PRG.p <= 1 then return PRG.set(1) end
+  if PRG.p == PRG.n - 1 then
+    local w, d = PRG.walk
+    repeat d = w[random(#w)] until d ~= PRG.deg
+    return PRG.set(d)
+  end
+  local t = PRG.seq()
+  PRG.i = k and k % #t + 1 or PRG.i % #t + 1
+  PRG.set(t[PRG.i])
+end
+
+function PRG.due(k, fresh)
+  if not fresh and PRG.chance < 100 and PRG.hold < 3 and random() * 100 >= PRG.chance then PRG.hold = PRG.hold + 1 return end
+  PRG.hold = 0
+  PRG.step(PRG.chance >= 100 and k or nil)
+end
+
+function PRG.reset(restart)
+  PRG.p, PRG.k, PRG.hold = params:get("prog"), nil, 0
+  if PRG.p <= 1 then return PRG.set(1) end
+  if PRG.sync then return end
+  if restart ~= false then PRG.i, PRG.t = 0, 0 return end
+  if PRG.p == PRG.n - 1 then return end
+  local t = PRG.seq()
+  PRG.i = clamp(PRG.i, 1, #t)
+  PRG.set(t[PRG.i])
+end
+
+function PRG.tick(now)
+  if PRG.p <= 1 then return end
+  if PRG.sync then
+    local k = Sync.count(PRG.div)
+    if k ~= PRG.k then
+      local fresh = PRG.k == nil
+      PRG.k = k
+      PRG.due(k, fresh)
+    end
+  elseif now >= PRG.t then
+    local fresh = PRG.t == 0
+    PRG.t = now + PRG.T
+    PRG.due(nil, fresh)
+  end
 end
 
 local SPIRAL = {{0.5, "oct down", -12}, {2 / 3, "5th down", -7}, {0.75, "4th down", -5}, {1, "unison", 0}, {4 / 3, "4th up", 5}, {1.5, "5th up", 7}, {2, "oct up", 12}}
@@ -1669,7 +1767,7 @@ local function setup_params()
   trig("do_fx_clear", "Clear All", function() Undo.mark() Morph.gesture(font.clear) FXM.t = 0 end)
   params:add_separator(" ")
 
-  group("main", "VOICES", 16)
+  group("main", "VOICES", 25)
   ctl("level", "Level", DB_FLOOR, LEVEL_MAX, "lin", 0.5, -20, "dB", function(v)
     local a = v <= DB_FLOOR + 0.5 and 0 or amp(v - LEVEL_REF)
     if esent.level ~= a then esent.level = a engine.master(a) end
@@ -1702,6 +1800,13 @@ local function setup_params()
   ctl("ampfloor", "Level Floor", 0, 100, "lin", 1, 25, "%")
   flag("freeze_all", "Freeze All", freeze_refresh)
   opt("quality", "Interpolation", {"cubic", "linear (eco)"}, 1, OPT)
+  opt("prog", "Progression", PRG.names, 1, function() PRG.reset(true) Sync.vis() end)
+  opt("prog_sync", "Prog Time Base", TB, 2, function(v) PRG.sync = v == 2 PRG.reset(true) Sync.vis() end)
+  num("prog_div", "Prog Every", 1, Sync.NDIV, Sync.DIV_4BAR, Sync.prfmt, function(v) PRG.div, PRG.k = v, nil end)
+  ctl("prog_time", "Prog Every", 1, 600, "exp", 0, 8, "s", function(v) PRG.T, PRG.t = v, min(PRG.t, util.time() + v) end)
+  ctl("prog_chance", "Prog Chance", 0, 100, "lin", 1, 100, "%", function(v) PRG.chance = v end)
+  str("prog_chance", function(p) local v = p:get() return v >= 100 and "always" or string.format("%d%%", floor(v + 0.5)) end)
+  for k, d in ipairs({2, 7, 5, 6}) do opt("prog_c" .. k, "Prog Step " .. k, {"-", "I", "II", "III", "IV", "V", "VI", "VII"}, d, function() PRG.reset(false) end) end
 
   group("lfo", "LFO", 24)
   opt("vlfo", "Volume LFO", OFFON, 1, function(v)
@@ -1814,12 +1919,10 @@ local function setup_params()
   pct("sh_fb", "Feedback", 20)
   fxlock("shimmer")
 
-  group("prism", "PRISM", 6)
+  group("prism", "PRISM", 4)
   pct("prism_mix", "Mix", 0)
-  pct("prism_bright", "Brightness", 50)
-  pct("prism_strike", "Strike", 25)
+  pct("prism_tone", "Tone", 50)
   ctl("prism_ring", "Ring", 0.05, 4, "exp", 0, 1, "s", true)
-  ctl("prism_band", "Colour", 300, 2500, "exp", 1, 1500, "Hz", true)
   fxlock("prism")
 
   group("tape", "TAPE", 11)
@@ -1908,8 +2011,9 @@ local function setup_params()
   clock.tempo_change_handler = function(bpm) engine.spiral_bpm(bpm) end
   fxlock("spiral")
 
-  group("sub", "SUB", 3)
-  pct("sub_mix", "Mix", 0)
+  group("sub", "OCTAVER", 4)
+  pct("super_mix", "Up", 0)
+  pct("sub_mix", "Down", 0)
   pct("sub_detune", "Detune", 65)
   fxlock("sub")
 
@@ -1930,7 +2034,7 @@ local function setup_params()
   fxlock("glitch")
   FXM.build(#params.params)
   for _, id in ipairs({"d_mix", "halo_mix", "prism_mix", "sh_mix", "reel_mix", "shaper_mix", "wobble_mix", "genloss_mix", "dimension_mix",
-    "stchorus_mix", "vibe_mix", "bc_mix", "wf_mix", "reso_mix", "ringmod_mix", "spiral_mix", "sub_mix", "ott_mix", "gl_ratio", "gl_mix"}) do
+    "stchorus_mix", "vibe_mix", "bc_mix", "wf_mix", "reso_mix", "ringmod_mix", "spiral_mix", "sub_mix", "super_mix", "ott_mix", "gl_ratio", "gl_mix"}) do
     local p = params:lookup_param(id)
     local s = p.string
     p.string = function(q) return q:get() <= 0 and "OFF" or s(q) end
@@ -1977,7 +2081,7 @@ local function setup_params()
   ctl("morph_slew", "Smoothing", 0, 8, "lin", 0.01, 0.1, "s")
   num("morph_seed", "Motion Seed", 1, 9999, 1)
 
-  group("bounce", "RECORD", 21)
+  group("bounce", "RECORD", 22)
   params:add_separator("Record Input")
   ctl("rec_gain", "Gain", -24, 24, "lin", 0.5, 0, "dB", LIVE.input)
   ctl("rec_max", "Max Time", 2, 60, "lin", 1, 30, "s")
@@ -1989,6 +2093,7 @@ local function setup_params()
   trig("do_clean_in", "Clean Input Recordings!", function() REC.clean("input") end)
   params:add_separator("Live Input")
   opt("rec_mode", "Hold K2/K3", {"record once", "go live"}, 1)
+  opt("rec_lsrc", "Live Source", {"input", "resample"}, 1, LIVE.input)
   ctl("rec_llen", "Live Length", 2, 30, "lin", 0.5, 8, "s")
   ctl("rec_lpre", "Live Overdub", 0, 95, "lin", 1, 0, "%", LIVE.input)
   ctl("rec_lmon", "Live Monitor", DB_FLOOR, 12, "lin", 0.5, DB_FLOOR, "dB", LIVE.input)
@@ -2022,7 +2127,8 @@ local function setup_params()
   act("source", function() scanned_dir = nil end)
   str("source", function(p) return short_name(p:get(), true) end)
   trig("do_rescan", "Re-scan Folder", function() scanned_dir = nil scan_source() end)
-  ctl("chunk", "Slice Length", 2, 60, "lin", 0.5, 15, "s")
+  ctl("chunk", "Slice Length", 0.1, 60, "exp", 0, 15, "s")
+  str("chunk", function(p) local v = p:get() return v < 1 and string.format("%d ms", floor(v * 1000 + 0.5)) or string.format("%.1f s", v) end)
   opt("src_norm", "Normalize", OFFON, 2, function(v) G.src_norm, voices_dirty = v, true end)
   trig("do_reslice", "Re-slice", function() Undo.mark() src.reslice() end)
 
@@ -2273,12 +2379,12 @@ end
 
 local MORPH_SKIP = {morph = true, source = true, src_norm = true, rev_freeze = true, chunk = true, lseed = true, level = true, quality = true, rev_type = true, d_series = true, binaural = true}
 local function morph_skip(id)
-  return MORPH_SKIP[id] or id:find("^morph") or id:find("^[vrp]lfo") or id:find("^do_") or id:find("^lock_")
+  return MORPH_SKIP[id] or id:find("^morph") or id:find("^prog") or id:find("^[vrp]lfo") or id:find("^do_") or id:find("^lock_")
     or id:find("^freeze") or id:find("^rec_") or id:find("^bounce_")
 end
 
 local CFG = {path = norns.state.data .. "settings",
-  ids = {"auto_update", "rec_gain", "rec_max", "rec_norm", "rec_src", "rec_mon", "bounce_len", "bounce_xf", "rec_lnorm", "rec_mode", "rec_llen", "rec_lpre", "rec_lmon"}}
+  ids = {"auto_update", "rec_gain", "rec_max", "rec_norm", "rec_src", "rec_mon", "bounce_len", "bounce_xf", "rec_lnorm", "rec_mode", "rec_llen", "rec_lpre", "rec_lmon", "rec_lsrc", "source", "chunk", "src_norm", "quality", "rev_type", "binaural"}}
 
 function CFG.save()
   local t, o, diff = {}, {"return "}, false
@@ -2293,6 +2399,10 @@ function CFG.save()
 end
 
 function CFG.init()
+  for _, p in ipairs(params.params) do
+    local id = p.id
+    if id and (id:find("^fxlock_") or (id:find("^lock_") and not id:find("^lock_v%d"))) then CFG.ids[#CFG.ids + 1] = id end
+  end
   local ok, t = pcall(loadfile(CFG.path, "t", {}))
   t = ok and type(t) == "table" and t or {}
   for _, id in ipairs(CFG.ids) do if t[id] then params:set(id, t[id]) end end
@@ -2308,6 +2418,7 @@ local function frame()
   Sync.ptick(now)
   if sys.n % 2 == 0 then
     Sync.tick(now)
+    PRG.tick(now)
     physics_tick(now, sys.n % 4 == 0)
     Grid.tick(now)
     if sys.pd then sys.pd, dirty = false, true end
