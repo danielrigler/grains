@@ -691,7 +691,12 @@ Engine_grains : CroneEngine {
         var csoft = { arg v; var c = v.clip2(1); c * (c.squared * -0.5 + 1.5) }, tri = { arg d; (d - 2048).abs * -0.00048828125 + 1 };
         var fin = { arg m, hold; var l = Lag.kr(m, 0.04); l.min(DelayN.kr(l, hold, hold)) };
         var defDir, stamp, cached, keep, stale;
-        var bpan = { arg x, az, v; var e = az.abs.min(1), th = e * 0.5pi, n = Delay1.ar(x) * (v * (0.707 + (e * 0.07))), f = OnePole.ar(DelayL.ar(x, 0.001, 0.000255 * (th + th.sin) + SampleDur.ir), (e * 0.8).squared) * (v * (0.707 - (e * 0.18))), r = az > 0; [Select.ar(r, [n, f]), Select.ar(r, [f, n])] };
+        var bpan = { arg x, az, v;
+            var th = az.abs.min(1) * 0.5pi, tk = SampleRate.ir / 3920, d = (tk + 1).reciprocal, b1 = (tk - 1) * d;
+            var hs = { arg s, t; var a = (t * 1.2).cos.madd(1.2566, 1.3889) * tk; FOS.ar(s, (a + 1) * d, (1 - a) * d, b1) };
+            var n = hs.(Delay1.ar(x), 0.5pi - th) * (v * 0.707), f = hs.(DelayL.ar(x, 0.001, 0.000255 * (th + th.sin) + SampleDur.ir), 0.5pi + th) * (v * 0.707), r = az > 0;
+            [Select.ar(r, [n, f]), Select.ar(r, [f, n])]
+        };
         nornsAddr = NetAddr("127.0.0.1", 10111);
 
         inL = -1;

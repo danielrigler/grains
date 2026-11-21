@@ -1368,6 +1368,7 @@ local function pset_read(fn)
       if not s:find('"' .. id .. '"', 1, true) then params:set(id, d) end
     end
   end
+  if params:get("fx_lockall") == 1 then sys.fxprev = nil sys.lockall(true) end
   local ok, t = pcall(loadfile(fn .. PSX, "t", {}))
   if not ok or type(t) ~= "table" then return end
   voices_set(t.v)
@@ -2156,10 +2157,12 @@ local function setup_params()
     p.startp, p.widthp = params:lookup_param(p.bstart), params:lookup_param(p.bwidth)
   end
   sys.last = #params.params
-  group("other", "OTHER", 2)
+  group("other", "OTHER", 3)
   trig("do_update", "Check for Updates", function() menu_close() installer:check(true) end)
   opt("auto_update", "Auto Update Check", OFFON, 1)
   params:set_save("auto_update", false)
+  flag("fx_lockall", "Lock All Effects", function(v) sys.lockall(v == 1) end)
+  params:set_save("fx_lockall", false)
   for _, id in ipairs(HIDDEN) do params:hide(id) end
 end
 
@@ -2173,6 +2176,24 @@ do
     count = function() return nva end,
     dirty = function() dirty = true end
   }
+end
+
+function sys.lockall(on)
+  if not sys.fxl then
+    sys.fxl = {}
+    for _, p in ipairs(params.params) do
+      local id = p.id
+      if id and id:find("^fxlock_") and id ~= "fxlock_lfo" then sys.fxl[#sys.fxl + 1] = id end
+    end
+  end
+  if on then
+    local prev = {}
+    for _, id in ipairs(sys.fxl) do prev[id] = params:get(id) params:set(id, 1) end
+    sys.fxprev = prev
+  elseif sys.fxprev then
+    for id, v in pairs(sys.fxprev) do params:set(id, v) end
+    sys.fxprev = nil
+  end
 end
 
 function sys.outdated()
@@ -2392,6 +2413,8 @@ function CFG.save()
     t[id] = params:get(id)
     if t[id] ~= CFG.t[id] then diff = true end
   end
+  t.fx_lockall, t.fx_prev = params:get("fx_lockall"), sys.fxprev
+  if t.fx_lockall ~= CFG.t.fx_lockall then diff = true end
   if not diff then return end
   ser(t, o)
   local f = io.open(CFG.path, "w")
@@ -2406,6 +2429,10 @@ function CFG.init()
   local ok, t = pcall(loadfile(CFG.path, "t", {}))
   t = ok and type(t) == "table" and t or {}
   for _, id in ipairs(CFG.ids) do if t[id] then params:set(id, t[id]) end end
+  if t.fx_lockall == 1 then
+    params:set("fx_lockall", 1, true)
+    sys.fxprev = type(t.fx_prev) == "table" and t.fx_prev or nil
+  end
   CFG.t = t
 end
 
