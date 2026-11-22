@@ -687,15 +687,15 @@ Engine_grains : CroneEngine {
     }
 
     alloc {
-        var t9dub = { arg x, f, amt, k1, k2; var d = x - OnePole.ar(x, 1 - f), h = (Delay1.ar(d) * (k2 / k1) + d).clip2(1 / k1), m = h.abs; x + (h * OnePole.ar(m / log(m * (255 * k1) + 1).max(1e-9), 1 - f) * (amt * (2.40823997 * k1 * k1))) };
+        var t9dub = { arg x, f, amt, k1, k2; var c = 1 - f, u = 255 * c * k1, l = LeakDC.ar(x, c), h = (Delay1.ar(l) * (k2 / k1) + l).clip2(1 / (c * k1)), m = h.abs; h * Integrator.ar((m * (m * (m * (0.0003518707 * u.cubed) + (0.061636214 * u.squared)) + (0.70576611 * u)) + 1.0019689) / (m * (m * (0.0024453558 * u.squared) + (0.22559948 * u)) + 1), c) * (amt * 0.0094440783 * k1 * c * f) + x };
         var csoft = { arg v; var c = v.clip2(1); c * (c.squared * -0.5 + 1.5) }, tri = { arg d; (d - 2048).abs * -0.00048828125 + 1 };
         var fin = { arg m, hold; var l = Lag.kr(m, 0.04); l.min(DelayN.kr(l, hold, hold)) };
         var defDir, stamp, cached, keep, stale;
         var bpan = { arg x, az, v;
             var tk = SampleRate.ir / 3920, d = (tk + 1).reciprocal, k = 1.2566 * tk * d, c = 0.3889 * tk * d;
             var th = az.abs * 0.5pi, g = x * (v * 0.707), h = LeakDC.ar(g, (tk - 1) * d);
-            var n = Delay1.ar(h * (cos(th * -1.2 + 0.6pi) * k + c) + g), f = DelayL.ar(h * (cos(th * 1.2 + 0.6pi) * k + c) + g, 0.001, (th + th.sin) * 0.000255 + SampleDur.ir), r = az > 0;
-            [Select.ar(r, [n, f]), Select.ar(r, [f, n])]
+            var n = Delay1.ar(h * (SinOsc.kr(0, th * -1.2 + 1.1pi) * k + c) + g), f = DelayL.ar(h * (SinOsc.kr(0, th * 1.2 + 1.1pi) * k + c) + g, 0.001, (th + SinOsc.kr(0, th)) * 0.000255 + SampleDur.ir);
+            Select.ar(az > 0, [[n, f], [f, n]])
         };
         nornsAddr = NetAddr("127.0.0.1", 10111);
 
@@ -839,26 +839,22 @@ Engine_grains : CroneEngine {
 
             keep.(SynthDef(\grainstape, {
                 arg bus, mix = 0;
-                var os = SampleRate.ir / 44100, sh = 0.596, fd = 0.6.pow(6) * 0.0011338, fhz = 0.4.cubed * 140.37, ob = 0.865.cubed * 44100, d, hs, x2, hb, lk, ilk;
-                var x = In.ar(bus, 2), sig = t9dub.(x * 2.25 + WhiteNoise.ar(1e-18), (1 - sh) / os, 1.2, 2.848, 1.152);
-                sig = DelayC.ar(sig, 0.003, SinOsc.kr(fhz * LFNoise1.kr(fhz * 0.5 ! 2).range(0.24, 0.98), pi, fd, fd));
-                sig = Slew.ar(sig, ob, ob);
-                d = Delay1.ar(sig) - sig;
-                hs = ((Delay1.ar(d * 0.5 + sig) - sig).abs * 0.12).min(1);
-                hs = hs * (hs * -0.5 + 1);
-                sig = (d * hs + sig).clip2(2.305929);
+                var os = SampleRate.ir / 44100, sh = 0.596, g = 0.6309573, fd = 0.6.pow(6) * 0.0011338, fhz = 0.4.cubed * 140.37, ob = 0.865.cubed * 19600, p, hs, x2, k, w;
+                var sig = t9dub.(In.ar(bus, 2), (1 - sh) / os, 1.2 / 2.25, 2.848 * 2.25, 1.152 * 2.25);
+                sig = Slew.ar(DelayC.ar(sig, 0.003, SinOsc.kr(LFNoise1.kr(fhz * 0.5 ! 2).range(fhz * 0.24, fhz * 0.98), pi, fd, fd)), ob, ob);
+                p = Delay1.ar(sig);
+                hs = (LPZ1.ar(p) - sig).abs.min(3.7037037);
+                hs = hs * (hs * -0.03645 + 0.27);
+                sig = ((p - sig) * hs + sig).clip2(1.0248573);
                 x2 = sig.squared;
-                sig = sig * (x2 * (x2 * (x2 * (x2 * (x2 * -0.000000100208 + 0.00000444473) + -0.0003952447) + 0.014492754) + -0.16666667) + 1);
+                sig = sig * (x2 * (x2 * (x2 * (x2 * (x2 * -0.00047305329 + 0.0041446515) + -0.072802057) + 0.52730693) + -1.197833) + 1.4196539);
                 sig = (Delay1.ar(sig) - sig) * hs + sig;
-                lk = (OnePole.ar(LocalIn.ar(2).squared, 0.998) * (0.0927 / os)).clip(1e-6, 0.9);
-                ilk = 1 - lk;
-                hb = OnePole.ar(sig * (0.066 / os) * ilk / lk, ilk);
-                LocalOut.ar(hb);
-                hb = BPF.ar(BPF.ar(hb, 60, 1.618), 56.25, 1.618);
-                sig = (t9dub.(hb * 0.33 + sig, sh / os, -0.8, 2.628, 1.372) * 0.6309573).clip2(0.9085097);
+                k = (Integrator.ar(LocalIn.ar(2).squared, 0.998) * (-0.0000020286058 / os.cubed) + 1).clip(0.1, 0.999999);
+                w = FOS.ar(sig * k, DC.ar(1), DC.ar(0), k);
+                LocalOut.ar(w);
+                sig = t9dub.(BPF.ar(BPF.ar(w, 60, 1.618), 56.25, 1.618) * (0.02178 / os) + sig, sh / os, -0.8 * g, 2.628 / g, 1.372 / g).clip2(0.9085097);
                 x2 = HPZ1.ar(sig).abs;
-                sig = sig.clip2(0.94 / (x2.max(Delay1.ar(x2)) * 2.7972026 + 1));
-                ReplaceOut.ar(bus, (sig - x) * fin.(mix, 0.005) + x);
+                XOut.ar(bus, fin.(mix, 0.005), sig.clip2(0.94 / (x2.max(Delay1.ar(x2)) * 2.7972026 + 1)));
             }));
 
             keep.(SynthDef(\grainsringmod, {
