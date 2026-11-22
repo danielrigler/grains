@@ -17,7 +17,7 @@ Engine_grains : CroneEngine {
     var busMain, busDly, fxMain, fxDelay, fxShimmer, fxTilt, fxDimension;
     var fxEq, fxTape, fxShaper, fxWobble, fxBitcrush, fxWavefold;
     var fxResonator, fxGlitch, fxHaas, fxRotate, fxRingmod, fxStChorus, fxVibe, fxSpiral, fxGenloss, fxSub, fxSuper, fxOctTap, octBus, octMix, fxReel, fxOtt, fxVerb, fxLevel, fxHalo, fxPrism, spiralBuffer;
-    var voiceBus, vfilt, vfg, vfTok, filtKeys, filtSet, vfDef, vfOn, vfPend, loopDef = \grainsloop, lq = 0, lb = 0;
+    var voiceBus, vfilt, vfg, vfTok, filtKeys, filtSet, vfDef, vfOn, vfPend, loopDef = \grainsloop, lq = 0, lb = 0, vctl, vcBus;
     var wobbleBuffer, glitchBuffer, bufSine;
     var eqLow = 0, eqMid = 0, eqHigh = 0, glRatio = 0, glMix = 1;
     var vparams, nls, actives, wins, wc, winBus, geos, loadTok, loadReq, loadCur, loadBusy;
@@ -127,6 +127,8 @@ Engine_grains : CroneEngine {
     winFrozen { arg i, ly; var c = ((i * nlMax) + ly) * 3; ^[\posStart, wc[c], \posEnd, wc[c + 1], \iw, wc[c + 2]] }
 
     winMapped { arg i, ly; var b = winBus.index + (((i * nlMax) + ly) * 3); ^[\posStart, "c" ++ b, \posEnd, "c" ++ (b + 1), \iw, "c" ++ (b + 2)] }
+
+    vcMapped { arg i; var b = vcBus[i].index; ^[\panwidth, "c" ++ b, \amul, "c" ++ (b + 1), \aadd, "c" ++ (b + 2)] }
 
     retire { arg s, rel, i, ly;
         if(s.notNil, { s.moveToHead(dg); s.set(\rel, rel, \gate, 0, *this.winFrozen(i, ly)) })
@@ -442,18 +444,16 @@ Engine_grains : CroneEngine {
     }
 
     setGeom { arg n, stride;
-        var s = stride.clip(1, nlMax);
+        var s = stride.clip(1, nlMax), m = [];
         if(s != curStride, {
             curStride = s;
             nv.do({ arg i;
                 nlMax.do({ arg ly;
                     var at = this.stateIndex(i, ly);
-                    var syn = voices[i][ly];
-                    if(syn.notNil, { syn.set(\statebus, at) });
-                    syn = this.dyingAt(i, ly);
-                    if(syn.notNil, { syn.set(\statebus, at) });
+                    [voices[i][ly], this.dyingAt(i, ly)].do({ arg syn; if(syn.notNil, { m = m.add([15, syn.nodeID, \statebus, at]) }) });
                 });
             });
+            if(m.size > 0, { context.server.sendBundle(nil, *m) });
         });
         this.setReport(n.clip(0, nv) * curStride);
     }
@@ -464,8 +464,7 @@ Engine_grains : CroneEngine {
 
     seeds {
         ^[\kTune, rrand(1.5, 5.0), \kDir, rrand(3.0, 9.0), \kAmp, rrand(2.5, 7.0),
-          \kPan, rrand(4.0, 12.0), \phAmp, 2pi.rand, \phPan, 2pi.rand,
-          \lagAmp, rrand(0.1, 0.7)]
+          \kPan, rrand(4.0, 12.0), \lagAmp, rrand(0.1, 0.7)]
     }
 
     reseedAll {
@@ -503,7 +502,7 @@ Engine_grains : CroneEngine {
             if(filtSet.includes(k).not, { put.(k, v) });
         });
         this.seeds.pairsDo({ arg k, v; put.(k, v) });
-        a = a ++ this.winMapped(i, ly);
+        a = a ++ this.winMapped(i, ly) ++ this.vcMapped(i);
         put.(\statebus, this.stateIndex(i, ly));
         put.(\head, if(seam[i], { heads[i].asMap }, -1));
         ^a
@@ -558,20 +557,18 @@ Engine_grains : CroneEngine {
         });
     }
 
-    setVoice { arg i, key, val;
-        var s = context.server;
-        if(key == \ampfloor, {
-            vparams[i].put(\amul, 1 - val).put(\aadd, 1 + val);
-            ^s.sendMsg(15, pgv[i].nodeID, \amul, 1 - val, \aadd, 1 + val);
-        });
+    voiceMsg { arg i, key, val;
+        if(key == \ampfloor, { ^[15, vctl[i].nodeID, \fl, val] });
+        if(key == \panwidth, { ^[15, vctl[i].nodeID, \pw, val] });
         vparams[i].put(key, val);
         if(filtSet.includes(key), {
-            if(vfilt[i].notNil, { s.sendMsg(15, vfilt[i].nodeID, key, val) });
             if((key == \cutoff) or: { key == \hpf }, { this.checkFilter(i) });
-            ^this
+            ^[15, vfilt[i].nodeID, key, val]
         });
-        s.sendMsg(15, pgv[i].nodeID, key, val);
+        ^[15, pgv[i].nodeID, key, val]
     }
+
+    setVoice { arg i, key, val; context.server.sendMsg(*this.voiceMsg(i, key, val)) }
 
     setFive { arg msg, keys;
         var i = msg[1].asInteger, p, m, k = 0, v;
@@ -651,7 +648,7 @@ Engine_grains : CroneEngine {
         if(p.notNil and: { p[4] != loadTok[src] }, { p = nil });
         loadTok[src] = loadTok[src] + 1;
         loadTok[dst] = loadTok[dst] + 1;
-        [buffers, bufR, voices, dying, dyingUntil, vparams, nls, actives, pgv, voiceBus, vfilt, vfDef, vfOn, vfPend, heads, seam, pks, muted, mpaused, muteTok].do({ arg a; a.swap(src, dst) });
+        [buffers, bufR, voices, dying, dyingUntil, vparams, nls, actives, pgv, vctl, vcBus, voiceBus, vfilt, vfDef, vfOn, vfPend, heads, seam, pks, muted, mpaused, muteTok].do({ arg a; a.swap(src, dst) });
         if(liveSlot == src, { liveSlot = dst }, { if(liveSlot == dst, { liveSlot = src }) });
         bs = src * nlMax * 2;
         bd = dst * nlMax * 2;
@@ -693,7 +690,7 @@ Engine_grains : CroneEngine {
         var defDir, stamp, cached, keep, stale;
         var bpan = { arg x, az, v;
             var tk = SampleRate.ir / 3920, d = (tk + 1).reciprocal, k = 1.2566 * tk * d, c = 0.3889 * tk * d;
-            var th = az.abs * 0.5pi, g = x * (v * 0.707), h = LeakDC.ar(g, (tk - 1) * d);
+            var th = az.abs * 0.5pi, g = x * v, h = LeakDC.ar(g, (tk - 1) * d);
             var n = Delay1.ar(h * (SinOsc.kr(0, th * -1.2 + 1.1pi) * k + c) + g), f = DelayL.ar(h * (SinOsc.kr(0, th * 1.2 + 1.1pi) * k + c) + g, 0.001, (th + SinOsc.kr(0, th)) * 0.000255 + SampleDur.ir);
             Select.ar(az > 0, [[n, f], [f, n]])
         };
@@ -753,6 +750,7 @@ Engine_grains : CroneEngine {
         busMain = Bus.audio(context.server, 2);
         busDly = Bus.audio(context.server, 2);
         voiceBus = Array.fill(nv, { Bus.audio(context.server, 2) });
+        vcBus = Array.fill(nv, { Bus.control(context.server, 3) });
 
         bufSine = Buffer.alloc(context.server, 4096, 1);
         bufSine.sine2([2], [0.5], false);
@@ -772,7 +770,7 @@ Engine_grains : CroneEngine {
             [\grainsloop, \grainsloopeco, \grainsloopbin, \grainsloopecobin, \grainslooplv, \grainsloopecolv, \grainsloopbinlv, \grainsloopecobinlv].do({ arg defName, n;
                 var eco = n % 2, bin = (n div: 2) % 2, lv = n div: 4;
                 keep.(SynthDef(defName, {
-                    arg bus, buf, statebus = 0, posStart = 0, posEnd = 48000, iw = 10, mrate = 1, prate = 1, gate = 1, rel = 1, rateSlew = 1.5, weight1 = 14, weight2 = 8, weight3 = 3, weight4 = 6, weight5 = 4, lrate1 = 1, lrate2 = 0.5, lrate3 = 4, lrate4 = 2, lrate5 = 0.25, lamp1 = 1, lamp2 = 1.5849, lamp3 = 0.1259, lamp4 = 0.3981, lamp5 = 1.2589, pm = 1, pq1 = 1, pq2 = 1, pq3 = 1, pq4 = 1, pq5 = 1, plag = 0.03, revprob = 0.1, panwidth = 0.5, amul = 0.75, aadd = 1.25, kTune = 3, kDir = 6, kAmp = 4.5, kPan = 8, phAmp = 0, phPan = 0, lagAmp = 0.4, i_intro = 1, i_nb = 0, head = -1;
+                    arg bus, buf, statebus = 0, posStart = 0, posEnd = 48000, iw = 10, mrate = 1, prate = 1, gate = 1, rel = 1, rateSlew = 1.5, weight1 = 14, weight2 = 8, weight3 = 3, weight4 = 6, weight5 = 4, lrate1 = 1, lrate2 = 0.5, lrate3 = 4, lrate4 = 2, lrate5 = 0.25, lamp1 = 1, lamp2 = 1.5849, lamp3 = 0.1259, lamp4 = 0.3981, lamp5 = 1.2589, pm = 1, pq1 = 1, pq2 = 1, pq3 = 1, pq4 = 1, pq5 = 1, plag = 0.03, revprob = 0.1, panwidth = 0.5, amul = 0.75, aadd = 1.25, kTune = 3, kDir = 6, kAmp = 4.5, kPan = 8, lagAmp = 0.4, i_intro = 1, i_nb = 0, head = -1;
                     var frames = BufFrames.ir(buf).max(4096), edge = (SampleRate.ir * 0.2).min(frames * 0.02).max((frames * 0.005).min(256)), iu = (frames - (edge * 2)).reciprocal, brs = BufRateScale.ir(buf);
                     var boot = Impulse.kr(0), idx = TWindex.kr(boot + Dust.kr(prate / kTune), [weight1, weight2, weight3, weight4, weight5], 1);
                     var rate = Lag.kr(Select.kr(idx, [lrate1, lrate2, lrate3, lrate4, lrate5]) * (TRand.kr(0, 1, Impulse.kr(mrate / kDir)) >= revprob).madd(brs * 2, brs.neg), rateSlew) * VarLag.kr(pm * Select.kr(idx, [pq1, pq2, pq3, pq4, pq5]), plag, 0, \linear);
@@ -792,9 +790,9 @@ Engine_grains : CroneEngine {
                         s2 = s2 * sg.(Phasor.kr(sw, kinc, 0, frames, resetTo));
                     });
                     Out.kr(statebus, pos.madd(iu, edge.neg * iu));
-                    s1 = [LinXFade2.ar(s1, s2, xfr.squared.madd(xfr.madd(-4, 6), -1)), SinOsc.kr(mrate / kPan, phPan, panwidth),
-                        SinOsc.kr(mrate / kAmp, phAmp).madd(amul, aadd) * EnvGen.kr(Env.new([0, 0.25, 1], [Rand(0.5, 2) * i_intro, Rand(1, 3) * i_intro], [4, -3]))
-                        * EnvGen.kr(Env.adsr(1, 1, 1, rel), gate + boot, doneAction: 2) * Lag.kr(Select.kr(idx, [lamp1, lamp2, lamp3, lamp4, lamp5]), lagAmp)];
+                    s1 = [LinXFade2.ar(s1, s2, xfr.squared.madd(xfr.madd(-4, 6), -1)), SinOsc.kr(mrate / kPan, Rand(0, 2pi), panwidth),
+                        SinOsc.kr(mrate / kAmp, Rand(0, 2pi)).madd(amul, aadd) * EnvGen.kr(Env.new([0, 0.25, 1], [Rand(0.5, 2) * i_intro, Rand(1, 3) * i_intro], [4, -3]))
+                        * EnvGen.kr(Env.adsr(1, 1, 1, rel, [1, 0.707][bin]), gate + boot, doneAction: 2) * Lag.kr(Select.kr(idx, [lamp1, lamp2, lamp3, lamp4, lamp5]), lagAmp)];
                     Out.ar(bus, if(bin > 0, { bpan.(*s1) }, { Pan2.ar(*s1) }));
                 }));
             });
@@ -815,6 +813,8 @@ Engine_grains : CroneEngine {
                 arg in, out, hpf = 20, vamp = 0.25, vampLag = 1, ngain = 1, gate = 1;
                 Out.ar(out, HPF.ar(In.ar(in, 2), Lag.kr(hpf, 0.1)) * (Lag.kr(vamp, vampLag) * LagUD.kr(ngain, 1, 0.02) * EnvGen.kr(Env.asr(0.05, 1, 0.05), gate, doneAction: 2)));
             }));
+
+            keep.(SynthDef(\grainsvctl, { arg out, pw = 0.5, fl = 0.25; var l = Lag.kr([pw, fl], 0.25); Out.kr(out, [l[0], 1 - l[1], 1 + l[1]]) }));
 
             keep.(SynthDef(\grainsvoicedry, {
                 arg in, out, vamp = 0.25, vampLag = 1, ngain = 1, gate = 1;
@@ -1200,6 +1200,7 @@ Engine_grains : CroneEngine {
 
         pg = ParGroup.head(context.xg);
         pgv = Array.fill(nv, { ParGroup.head(pg) });
+        vctl = Array.fill(nv, { arg i; Synth.head(pgv[i], \grainsvctl, [\out, vcBus[i].index]) });
         dg = ParGroup.after(pg);
         vfg = ParGroup.after(dg);
         vfDef = Array.fill(nv, { \grainsvoicedry });
@@ -1253,7 +1254,7 @@ Engine_grains : CroneEngine {
         this.addCommand("set_one", "isf", { arg msg; this.setVoice(msg[1].asInteger, msg[2].asSymbol, msg[3]); });
         this.addCommand("set_pq", "ifffff", { arg msg; this.setFive(msg, #[\pq1, \pq2, \pq3, \pq4, \pq5]) });
         this.addCommand("set_lr", "ifffff", { arg msg; this.setFive(msg, #[\lrate1, \lrate2, \lrate3, \lrate4, \lrate5]) });
-        this.addCommand("set_all", "siffffff", { arg msg; var key = msg[1].asSymbol, n = msg[2].asInteger.clip(0, nv), i = 0; while({ i < n }, { this.setVoice(i, key, msg[i + 3]); i = i + 1 }) });
+        this.addCommand("set_all", "siffffff", { arg msg; var key = msg[1].asSymbol, n = msg[2].asInteger.clip(0, nv), i = 0, m = Array.new(n); while({ i < n }, { m = m.add(this.voiceMsg(i, key, msg[i + 3])); i = i + 1 }); if(n > 0, { context.server.sendBundle(nil, *m) }) });
         this.addCommand("hello", "", { nornsAddr.sendMsg("/grains/hello", stale.binaryValue) });
         this.addCommand("reseed", "", { this.reseedAll });
         this.addCommand("quality", "i", { arg msg; lq = (msg[1] > 0).binaryValue; this.setLoop });
@@ -1348,7 +1349,7 @@ Engine_grains : CroneEngine {
         [wobbleBuffer, glitchBuffer, spiralBuffer, bufSine].do({ arg b; if(b.notNil, { b.free }) });
         if(silent.notNil, { silent.free });
         if(nullBuf.notNil, { nullBuf.free });
-        if(voiceBus.notNil, { voiceBus.do({ arg b; if(b.notNil, { b.free }) }) });
+        [voiceBus, vcBus].do({ arg a; if(a.notNil, { a.do({ arg b; if(b.notNil, { b.free }) }) }) });
         [stateBus, busMain, busDly, winBus, octBus].do({ arg b; if(b.notNil, { b.free }) });
         if(heads.notNil, { heads.do({ arg b; b.free }) });
     }

@@ -556,9 +556,11 @@ local function nudge_layers(i, step)
   if n > 0 then params:set("density", d + n * dir) end
 end
 
+local tog = {}
 local function flush_population()
   if not pop_dirty then return end
   spread_density()
+  local k, wake = 0, false
   for i = 1, NV do
     local v = V[i]
     local n = v.act
@@ -573,11 +575,16 @@ local function flush_population()
     end
     local on = n > 0
     if v.on ~= on then
-      v.on, Sync.vdirty, dirty = on, true, true
-      if on and voices_dirty then push_per_voice() end
-      engine.active(i - 1, on and 1 or 0)
-      if on then v.lw = {} end
+      v.on, Sync.vdirty, dirty, k, wake = on, true, true, k + 1, wake or on
+      tog[k] = i
     end
+  end
+  if wake and voices_dirty then push_per_voice() end
+  for j = 1, k do
+    local i = tog[j]
+    local on = V[i].on
+    engine.active(i - 1, on and 1 or 0)
+    if on then V[i].lw = {} end
   end
   pop_dirty = false
   sel = nva < 1 and 0 or clamp(sel, 1, nva)
@@ -708,10 +715,10 @@ local function physics_tick(now, step)
   for i = 1, nva do
     local v = V[i]
     if v.on then
-      local ts, te, nl = v.ts, v.te, v.act
-      if step and not v.frz then
+      local ts, te, nl, frz = v.ts, v.te, v.act, v.frz
+      if step and (not frz or not v.lw[2]) then
         local pit, lw, changed = v.pit, v.lw, false
-        pit:update(v.rlo * SPAN, v.rhi * SPAN, v.mr or 1)
+        if not frz then pit:update(v.rlo * SPAN, v.rhi * SPAN, v.mr or 1) end
         for L = 1, nl do
           local a, b = pit:window(L)
           local k = L * 2
