@@ -249,11 +249,22 @@ local function cell_walls(v, i, sel)
   if hp > 0 then R(hi, xb, pf > 0 and yc - hp or yc, 1, hp + 1) end
 end
 
-function M.draw(V, sel, blink)
-  local full = NCELL <= 1
+local function cell_load(i, t)
+  local w = floor(CW * 0.75)
+  local x, y, p = CX[i] + floor((CW - w) / 2), CY[i] + WDY, floor(t % 1 * (w + 8)) - 8
+  R(2, x, y + 3, w, 1)
+  R(15, x + max(p, 0), y + 3, min(p + 8, w) - max(p, 0), 1)
+  s_level(8) screen.move(CX[i] + floor(CW / 2), y) screen.text_center("loading")
+end
+
+function M.draw(V, sel, blink, t)
+  local full, busy = NCELL <= 1, false
   for i = 1, NCELL do
     local v = V[i]
-    if v.raw then
+    if v.raw == nil and v.file then
+      cell_load(i, t)
+      busy = true
+    elseif v.raw then
       if v.wgen ~= GEN then
         if v.igen ~= GEN then v.igen, v.img, v.iver = GEN, {}, {} end
         v.wgen, v.wf, v.wver = GEN, wave(v.raw), (v.wver or 0) + 1
@@ -275,6 +286,7 @@ function M.draw(V, sel, blink)
     if v.raw and v.on then cell_walls(v, i, sel == i) end
   end
   flush()
+  return busy
 end
 
 function M.icons(F)

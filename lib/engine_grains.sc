@@ -4,6 +4,7 @@ Engine_grains : CroneEngine {
     classvar <nlMax = 14;
     classvar <wfCols = 128;
     classvar <minFrames = 4096;
+    classvar <memMax = 50331648;
     classvar <relLeave = 1.2;
     classvar <reportChunk = 4;
     classvar <recDir = "/home/we/dust/audio/grains/";
@@ -596,6 +597,7 @@ Engine_grains : CroneEngine {
     loadLoop { arg i;
         loadBusy[i] = true;
         fork {
+            0.02.wait;
             while({ loadReq[i].notNil }, {
                 var r = loadReq[i];
                 loadReq[i] = nil;
@@ -608,13 +610,14 @@ Engine_grains : CroneEngine {
     }
 
     loadChunk { arg i, path, chunkDur, randomStart, startSec, token;
-        var s = context.server, sf, frames, sr, ch, num, start, b, r, peaks, blk, old, oldR, n;
+        var s = context.server, sf, frames, sr, ch, num, start, b, r, peaks, blk, old, oldR, n, k;
         if(token != loadTok[i], { ^this });
         sf = SoundFile.openRead(path);
         if(sf.isNil, { ^this.readFailed(i, token) });
         frames = sf.numFrames; sr = sf.sampleRate; ch = sf.numChannels.max(1);
         if((frames <= minFrames) or: { sr <= 0 }, { sf.close; ^this.readFailed(i, token) });
-        num = min(frames, (chunkDur * sr).asInteger).max(minFrames).min(frames).min(16777216);
+        k = buffers.collect({ arg x, j; loadBusy[j] or: { x !== silent } }).occurrencesOf(true).max(1);
+        num = min(frames, (chunkDur * sr).asInteger).min(16777216).min(memMax div: (k * ch.min(2))).max(minFrames).min(frames);
         start = if((randomStart > 0) and: { frames > num }, { (frames - num).rand }, { (startSec * sr).asInteger.clip(0, max(frames - num, 0)) });
         b = Buffer.readChannel(s, path, start, num, [0]);
         r = if(ch > 1, { Buffer.readChannel(s, path, start, num, [1]) }, { b });
@@ -638,7 +641,7 @@ Engine_grains : CroneEngine {
         pks[i] = peaks;
         this.startVoice(i);
         this.dropBufs(old, oldR);
-        nornsAddr.sendMsg(*(["/grains/waveform", i] ++ peaks ++ [start / sr]));
+        nornsAddr.sendMsg(*(["/grains/waveform", i] ++ peaks ++ [start / sr, num, num / sr, ch.min(2)]));
     }
 
     moveVoice { arg src, dst;

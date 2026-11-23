@@ -78,6 +78,7 @@ local Grid = include "grains/lib/gridui"
 local NV, NL, DEFAULT_NV, LCAPS = 6, 14, 4, {14, 10, 6, 5, 4, 4}
 local AUDIO, SPAN, FPS, CTRL_HZ = "/home/we/dust/audio/", Pit.SPAN, 60, 30
 local RATE_OFF, LPF_OFF, DB_FLOOR, LEVEL_MAX, LEVEL_REF, VOL_DEF = 0.05, 20000, -60, 6, -12, -6
+local MEM_MAX = 50331648
 local POP_DUR, GLIDE_N, GLIDE_K, XF_EASE, RTOUCH = 0.5, 12, 1 - 0.82 ^ 2, 0.49, 1.5
 local floor, abs, random, min, max = math.floor, math.abs, math.random, math.min, math.max
 
@@ -769,7 +770,7 @@ local function reroll_seeds(snap)
 end
 
 local function unload_view(v)
-  v.xf, v.raw, v.pk, v.lhead, v.ndb, dirty = nil, nil, nil, nil, 0, true
+  v.xf, v.raw, v.pk, v.lhead, v.nf, v.pw, v.ndb, dirty = nil, nil, nil, nil, nil, nil, 0, true
   for L = 1, NL do v.pos[L] = 0 end
 end
 
@@ -793,6 +794,22 @@ local function clear_voice(i)
   unload_view(v)
   params:set(PID[i].file, AUDIO, true)
   engine.clear(i - 1)
+end
+
+local function fit_ram()
+  local n = 0
+  for j = 1, NV do if V[j].file then n = n + 1 end end
+  local share = MEM_MAX // max(n, 1)
+  for j = 1, NV do
+    local v, p = V[j], PID[j]
+    local cap = share // (v.ch or 2)
+    if v.nf and v.nf > cap * 1.01 and v.file ~= LIVE_F and v.file ~= CAP_F then
+      local s = v.at + params:get(p.bstart) * v.dur / 100
+      local e, d = s + params:get(p.bwidth) * v.dur / 100, v.dur * cap / v.nf
+      load_voice(j, v.file, d, clamp((s + e - d) / 2, v.at, v.at + v.dur - d))
+      v.pw = {s, e}
+    end
+  end
 end
 
 local function src_flush()
@@ -827,7 +844,7 @@ end
 local function retry_voice(i)
   local v = V[i]
   v.tries = v.tries + 1
-  if v.tries > 8 or #file_list == 0 then v.xf, v.raw = nil, nil return end
+  if v.tries > 8 or #file_list == 0 then v.xf, v.raw = nil, false return end
   local pool = {}
   for _, f in ipairs(file_list) do if f ~= v.file then pool[#pool + 1] = f end end
   if #pool == 0 then pool = file_list end
@@ -2135,8 +2152,16 @@ local function setup_params()
   act("source", function() scanned_dir = nil end)
   str("source", function(p) return short_name(p:get(), true) end)
   trig("do_rescan", "Re-scan Folder", function() scanned_dir = nil scan_source() end)
-  ctl("chunk", "Slice Length", 0.1, 60, "exp", 0, 15, "s")
-  str("chunk", function(p) local v = p:get() return v < 1 and string.format("%d ms", floor(v * 1000 + 0.5)) or string.format("%.1f s", v) end)
+  ctl("chunk", "Slice Length", 0.1, 300, "exp", 0, 15, "s")
+  local function mmss(v) v = floor(v + 0.5) return string.format("%d:%02d", floor(v / 60), v % 60) end
+  str("chunk", function(p)
+    local v = p:get()
+    if v < 1 then return string.format("%d ms", floor(v * 1000 + 0.5)) end
+    local n = 0
+    for i = 1, NV do if V[i].file then n = n + 1 end end
+    local s, m = v < 60 and string.format("%.1f s", v) or mmss(v), MEM_MAX / 48000 / max(n, 1)
+    return v > m / 2 and s .. " (" .. mmss(m / 2) .. "/" .. mmss(min(v, m)) .. ")" or s
+  end)
   opt("src_norm", "Normalize", OFFON, 2, function(v) G.src_norm, voices_dirty = v, true end)
   trig("do_reslice", "Re-slice", function() Undo.mark() src.reslice() end)
 
@@ -2241,8 +2266,15 @@ local function setup_osc()
       v.pk, v.ndb, voices_dirty = pk, v.file ~= LIVE_F and clamp(-20 * math.log(max(mx, 1e-4), 10), -12, 15) or 0, true
       local at = args[N + 2]
       v.at = type(at) == "number" and at >= 0 and at or 0
-      v.raw, v.wgen = raw, nil
+      v.raw, v.wgen, v.nf, v.dur, v.ch = raw, nil, args[N + 3], args[N + 4], args[N + 5]
       if v.file then xf_in(v) end
+      if v.pw and v.nf then
+        local w = min((v.pw[2] - v.pw[1]) / v.dur, 1)
+        params:set(PID[i].bstart, clamp((v.pw[1] - v.at) / v.dur, 0, 1 - w) * 100)
+        params:set(PID[i].bwidth, w * 100)
+        v.pw = nil
+      end
+      fit_ram()
     elseif path == "/grains/fail" then
       if i >= 1 and i <= NV then retry_voice(i) end
     elseif path == "/grains/bounce" then
@@ -2268,9 +2300,9 @@ end
 function redraw(now)
   if installer:pending() then return installer:redraw() end
   screen.clear()
-  matrix.draw(V, sel, blink)
-  if nva < 1 then matrix.notice("no audio loaded", "K1+K2 or load from the MENU", "or hold K3 to record input") end
   now = now or util.time()
+  if matrix.draw(V, sel, blink, now) then dirty = true end
+  if nva < 1 then matrix.notice("no audio loaded", "K1+K2 or load from the MENU", "or hold K3 to record input") end
   local vol_on = vbar.f and now - vbar.t < POP_DUR
   if vol_on then matrix.volbar(vbar.f) elseif morph_on then matrix.morphbar(Morph.pos) end
   if vol_on or not morph_on then matrix.icons(font) end
