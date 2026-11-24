@@ -1,9 +1,8 @@
-local M = {VOL_MIN_DB = -60, VOL_MAX_DB = 16, PITCH_LO = -24, PITCH_HI = 24}
+local M = {VOL_MIN_DB = -60, VOL_MAX_DB = 16, PITCH_LO = -24, PITCH_HI = 24, FLIP = 0.1}
 
-local floor, max, min, abs, sqrt, random = math.floor, math.max, math.min, math.abs, math.sqrt, math.random
-local GLIDE = 0.92
-local GK = sqrt(1 - GLIDE * GLIDE)
-local count, mark, snapfn = function() return 0 end, function() end, nil
+local floor, max, min, random = math.floor, math.max, math.min, math.random
+local count, mark, snapfn, S, key = function() return 0 end, function() end, nil, nil, nil
+local LIM = M.FLIP * 4294967296
 
 function M.snap(x)
   local v = snapfn and snapfn(x) or floor(x + 0.5)
@@ -12,30 +11,91 @@ function M.snap(x)
   return v
 end
 
+local function round(x) return x < 0 and -floor(0.5 - x) or floor(x + 0.5) end
+
+local function flip(s, t)
+  local x = (s + t * 0x9E3779B1) & 0xffffffff
+  x = ((x ~ (x >> 16)) * 0x45D9F3B) & 0xffffffff
+  x = ((x ~ (x >> 16)) * 0x45D9F3B) & 0xffffffff
+  return (x ~ (x >> 16)) < LIM
+end
+
+local function bounce(x, lo, hi)
+  local r = hi - lo
+  if r <= 0 then return lo end
+  local y = (x - lo) % (2 * r)
+  return lo + (y > r and 2 * r - y or y)
+end
+
+local function vol(e, b, u)
+  if u == 0 then return b end
+  local x = bounce(b + u * e.rate, min(e.lo, b), max(e.hi, b))
+  return floor(x / e.quant + 0.5) * e.quant
+end
+
+local function pitch(e, b, u)
+  if u == 0 then return b end
+  local k = e.k
+  return S.pitch(round(bounce(S.near(b, k) + u * e.step, e.dlo, e.dhi)), k)
+end
+
+local function pitch_pre(e)
+  local k = key()
+  e.k, e.step, e.dlo, e.dhi = k, e.rate * S.size(k), S.near(e.lo, k), S.near(e.hi, k)
+end
+
 local E = {}
 E.__index = E
 
-function E:q(p) return self.snap and self.snap(p) or floor(p / self.quant + 0.5) * self.quant end
+function E:anchor(n)
+  local ids, base, last, u, c, sd = self.ids, self.base, self.last, self.u, self.c, self.sd
+  for i = 1, n do
+    local v = params:get(ids[i])
+    base[i], last[i], u[i], c[i], sd[i] = v, v, 0, random() < 0.5 and 1 or -1, random(0, 0x7fffffff)
+  end
+  self.n, self.t = n, 0
+end
+
+function E:stale(n)
+  if n ~= self.n then return true end
+  local ids, last = self.ids, self.last
+  for i = 1, n do if params:get(ids[i]) ~= last[i] then return true end end
+  return false
+end
 
 function E:kick(d)
   local n = count()
   if n < 1 then return end
-  local pos, vel, ids, sum = self.pos, self.vel, self.ids, 0
-  for i = 1, n do
-    local cur, p = params:get(ids[i]), pos[i]
-    if not p or abs(self:q(p) - cur) > 1e-6 then p = cur end
-    pos[i] = p
-    vel[i] = (vel[i] or random() * 2 - 1) * GLIDE + (random() * 2 - 1) * GK
-    sum = sum + vel[i]
+  if self:stale(n) then self:anchor(n) end
+  local t, u, c, sd = self.t, self.u, self.c, self.sd
+  if d > 0 then
+    for _ = 1, d do
+      for i = 1, n do
+        local x = flip(sd[i], t) and -c[i] or c[i]
+        c[i], u[i] = x, u[i] + x
+      end
+      t = t + 1
+    end
+  else
+    for _ = 1, -d do
+      t = t - 1
+      for i = 1, n do
+        local x = c[i]
+        u[i], c[i] = u[i] - x, flip(sd[i], t) and -x or x
+      end
+    end
   end
-  local mean = self.level and sum / n or 0
+  self.t = t
+  if self.pre then self:pre() end
+  local ids, base, last, f, hit = self.ids, self.base, self.last, self.f, false
   for i = 1, n do
-    local p = pos[i] + (vel[i] - mean) * self.rate * d
-    if p < self.lo then p, vel[i] = self.lo, -vel[i] elseif p > self.hi then p, vel[i] = self.hi, -vel[i] end
-    pos[i] = p
-    params:set(ids[i], self:q(p))
+    local v = f(self, base[i], u[i])
+    if v ~= last[i] then
+      params:set(ids[i], v)
+      last[i], hit = params:get(ids[i]), true
+    end
   end
-  mark()
+  if hit then mark() end
 end
 
 function E:nudge(i, d, others)
@@ -71,12 +131,17 @@ function E:nudge(i, d, others)
   mark()
 end
 
+local function eng(e)
+  e.n, e.t, e.base, e.last, e.u, e.c, e.sd, e.shadow, e.at = 0, 0, {}, {}, {}, {}, {}, {}, {}
+  return setmetatable(e, E)
+end
+
 function M.init(cfg)
-  count, mark, snapfn = cfg.count, cfg.dirty, cfg.snap
-  M.vol = setmetatable({ids = cfg.vol_ids, rate = 3, level = true, lo = -60, hi = 6, quant = 0.5,
-    emin = M.VOL_MIN_DB, emax = M.VOL_MAX_DB, slack = 76, pos = {}, vel = {}, shadow = {}, at = {}}, E)
-  M.pitch = setmetatable({ids = cfg.tune_ids, rate = 2.5, lo = M.PITCH_LO, hi = M.PITCH_HI, quant = 1,
-    snap = M.snap, move = cfg.move, emin = M.PITCH_LO, emax = M.PITCH_HI, slack = 0, pos = {}, vel = {}, shadow = {}, at = {}}, E)
+  count, mark, snapfn, S, key = cfg.count, cfg.dirty, cfg.snap, cfg.scale, cfg.key
+  M.vol = eng{ids = cfg.vol_ids, f = vol, rate = 2, lo = -42, hi = 6, quant = 0.5,
+    emin = M.VOL_MIN_DB, emax = M.VOL_MAX_DB, slack = 76}
+  M.pitch = eng{ids = cfg.tune_ids, f = pitch, pre = pitch_pre, rate = 0.1, lo = M.PITCH_LO, hi = M.PITCH_HI,
+    move = cfg.move, emin = M.PITCH_LO, emax = M.PITCH_HI, slack = 0}
 end
 
 return M

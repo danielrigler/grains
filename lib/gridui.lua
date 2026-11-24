@@ -244,10 +244,19 @@ end
 
 function G.init(c)
   cfg, V = c, c.V
+  local hw, core = grid, grid.real_grid or grid
+  if not grid.real_grid and util.file_exists(_path.code .. "midigrid/lib/mg_128.lua") then
+    local ok, m = pcall(include, "midigrid/lib/mg_128")
+    if ok and m and m.connect then hw = m end
+  end
   local tg = _path.code .. "toga/lib/togagrid.lua"
-  local grid = util.file_exists(tg) and dofile(tg) or grid
-  g = grid.connect()
-  g.key, resend, grid.add = key, g.update_led, resize
+  local toga = util.file_exists(tg) and dofile(tg)
+  g = (toga or hw).connect()
+  if toga and hw ~= grid then
+    local m = hw.connect()
+    m.key, g.old_grid = key, m
+  end
+  g.key, resend, core.add = key, g.update_led, resize
   resize()
   if g.dest then
     if util.make_dir and norns.state.data then util.make_dir(norns.state.data) end

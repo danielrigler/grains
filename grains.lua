@@ -2205,6 +2205,8 @@ do
     vol_ids = vol_ids, tune_ids = tune_ids,
     snap = function(x) return Scale.snap(x, params:get("scale")) end,
     move = function(x, d) return Scale.move(x, d, params:get("scale")) end,
+    scale = Scale,
+    key = function() return params:get("scale") end,
     count = function() return nva end,
     dirty = function() dirty = true end
   }
